@@ -16,6 +16,95 @@ function stripHtml(html) {
     .trim();
 }
 
+// ============================================================
+// REGISTERED COURSES COMPRESSOR
+// Converts raw calendar events (from getRegistrationEvents) into
+// a lean format the LLM can use for conflict avoidance
+// ============================================================
+
+function compressRegisteredForLLM(events) {
+  const seen = new Set();
+  const courses = [];
+
+  for (const event of events) {
+    const start = new Date(event.start);
+    const end = new Date(event.end);
+    const dayIdx = start.getDay() - 1;
+    if (dayIdx < 0 || dayIdx > 4) continue;
+
+    const key = event.crn + "-" + dayIdx;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+    const startStr =
+      String(start.getHours()).padStart(2, "0") +
+      String(start.getMinutes()).padStart(2, "0");
+    const endStr =
+      String(end.getHours()).padStart(2, "0") +
+      String(end.getMinutes()).padStart(2, "0");
+
+    const existing = courses.find((c) => c.crn === String(event.crn));
+    if (existing) {
+      if (!existing.days.includes(dayNames[dayIdx]))
+        existing.days.push(dayNames[dayIdx]);
+    } else {
+      courses.push({
+        crn: String(event.crn),
+        course: event.subject + " " + event.courseNumber,
+        title: event.title,
+        days: [dayNames[dayIdx]],
+        start: startStr,
+        end: endStr,
+      });
+    }
+  }
+  return courses;
+}
+
+// ============================================================
+// PRE-FILTER
+// Removes sections that conflict with already-registered courses
+// and annotates each remaining section with conflictsWith[]
+// so the LLM has explicit guidance rather than doing the math itself
+// ============================================================
+
+function applyPreFilter(compressed, registeredCourses) {
+  return {
+    eligible: compressed.eligible
+      .map((course) => {
+        const filteredSections = course.sections
+          .map((section) => {
+            if (section.online || !section.days || !section.start) {
+              return { ...section, conflictsWith: [] };
+            }
+
+            const conflicts = [];
+            for (const reg of registeredCourses) {
+              if (!reg.days || !reg.start) continue;
+              const sharedDays = section.days.filter((d) =>
+                reg.days.includes(d),
+              );
+              if (sharedDays.length === 0) continue;
+              const secStart = timeStrToMinutes(section.start);
+              const secEnd = timeStrToMinutes(section.end);
+              const regStart = timeStrToMinutes(reg.start);
+              const regEnd = timeStrToMinutes(reg.end);
+              if (secStart < regEnd && regStart < secEnd) {
+                conflicts.push(reg.crn + " (" + reg.course + ")");
+              }
+            }
+            return { ...section, conflictsWith: conflicts };
+            // Drop sections that conflict with registered courses entirely
+          })
+          .filter((s) => s.conflictsWith.length === 0);
+
+        return { ...course, sections: filteredSections };
+      })
+      .filter((c) => c.sections.length > 0),
+  };
+}
+
 function compressForLLM(data) {
   return {
     eligible: data.eligible
@@ -64,10 +153,13 @@ You are an academic schedule planning assistant helping students at Texas State 
 build optimal course schedules for an upcoming semester.
 
 You will receive:
-1. A JSON object listing the student's eligible courses — each with a requirement label, 
-   course description, and one or more open sections (CRN, days, times, seats, instructor).
-2. The student's preferences in natural language (e.g. "no classes before 11am", 
-   "I'm interested in public health careers", "I like writing-intensive courses").
+1. ALREADY REGISTERED: courses the student is currently enrolled in. These are FIXED — 
+   you must never conflict with them, never include them in your output schedules, and only output the NEW courses being added.
+   Treat their time slots as completely blocked.
+2. ELIGIBLE COURSES: courses available to add, each with open sections. Each section may 
+   include a conflictsWith[] field — if it is non-empty, that section has already been 
+   flagged as conflicting with a registered course and must NOT be selected.
+3. The student's preferences in natural language.
 
 ═══════════════════════════════════════════
 HARD RULES — never violate these
@@ -158,6 +250,8 @@ let savedSchedules = [];
 let activeView = "registered";
 let conversationHistory = []; // persists for the session
 let cachedRawData = null; // holds analysis results across chat turns
+let cachedRegisteredCourses = []; // currently registered sections for conflict awareness
+let cachedRegisteredTerm = null; // which term those registered courses belong to
 
 // ============================================================
 // INIT
@@ -218,6 +312,8 @@ $("termSelect").addEventListener("change", (e) => {
   currentTerm = e.target.value;
   analysisResults = null;
   cachedRawData = null;
+  cachedRegisteredCourses = [];
+  cachedRegisteredTerm = null;
   conversationHistory = []; // reset chat context when term changes
   activeView = "registered";
   renderSavedList();
@@ -239,10 +335,15 @@ function loadSchedule(term) {
   $("statusBar").textContent = "Loading schedule...";
   chrome.runtime.sendMessage({ action: "getSchedule", term: term }, (data) => {
     if (data && data.length > 0) {
+      // Cache registered courses — tag with term so we don't bleed across terms
+      cachedRegisteredCourses = compressRegisteredForLLM(data);
+      cachedRegisteredTerm = term;
       renderCoursesOnCalendar(data);
       const unique = new Set(data.map((e) => e.crn));
       $("statusBar").textContent = unique.size + " registered courses";
     } else {
+      cachedRegisteredCourses = [];
+      cachedRegisteredTerm = term;
       buildEmptyCalendar();
       $("statusBar").textContent = "No registered courses for this term";
     }
@@ -470,11 +571,31 @@ function sectionsConflict(a, b) {
 }
 
 // Returns the first conflicting pair {a, b} or null if clean
+// Also checks against already-registered courses
 function findFirstConflict(courses) {
+  // Check within the proposed schedule
   for (let i = 0; i < courses.length; i++) {
     for (let j = i + 1; j < courses.length; j++) {
       if (sectionsConflict(courses[i], courses[j])) {
         return { a: courses[i], b: courses[j] };
+      }
+    }
+  }
+  // Check against registered courses — only if same term
+  if (cachedRegisteredTerm === currentTerm) {
+    for (const proposed of courses) {
+      // Skip if this course IS a registered course (LLM sometimes echoes them back)
+      if (cachedRegisteredCourses.some((r) => r.crn === proposed.crn)) continue;
+      for (const registered of cachedRegisteredCourses) {
+        if (sectionsConflict(proposed, registered)) {
+          return {
+            a: proposed,
+            b: {
+              ...registered,
+              course: registered.course + " (already registered)",
+            },
+          };
+        }
       }
     }
   }
@@ -536,11 +657,50 @@ async function sendChat() {
   $("statusBar").textContent = "Thinking...";
 
   try {
-    // Step 3: build message — inject compressed course data only on first turn
+    // Step 3: build message
     const isFirstTurn = conversationHistory.length === 0;
-    const userMessage = isFirstTurn
-      ? `Here are my eligible courses:\n${JSON.stringify(compressForLLM(cachedRawData))}\n\nMy preferences: ${input}`
-      : input;
+    let userMessage;
+
+    if (isFirstTurn) {
+      const compressed = compressForLLM(cachedRawData);
+
+      // Only use registered courses for conflict avoidance if they're from the same
+      // term being planned. Don't let Summer registrations block Fall planning.
+      const planningTerm = currentTerm;
+      const relevantRegistered =
+        cachedRegisteredTerm === planningTerm ? cachedRegisteredCourses : [];
+
+      console.log(
+        "[BobcatPlus] Planning term:",
+        planningTerm,
+        "| Registered term:",
+        cachedRegisteredTerm,
+        "| Using registered:",
+        relevantRegistered.length,
+        "courses",
+      );
+
+      const preFiltered = applyPreFilter(compressed, relevantRegistered);
+
+      const registeredBlock =
+        relevantRegistered.length > 0
+          ? `ALREADY REGISTERED (treat as locked — build around these, never conflict with them):\n${JSON.stringify(relevantRegistered)}\n\n`
+          : "";
+
+      console.log(
+        "[BobcatPlus] Pre-filter: eligible sections after filter:",
+        preFiltered.eligible
+          .map((c) => c.course + "(" + c.sections.length + " sections)")
+          .join(", "),
+      );
+
+      userMessage =
+        `${registeredBlock}` +
+        `ELIGIBLE COURSES TO SCHEDULE:\n${JSON.stringify(preFiltered)}\n\n` +
+        `My preferences: ${input}`;
+    } else {
+      userMessage = input;
+    }
 
     conversationHistory.push({ role: "user", content: userMessage });
 
@@ -667,16 +827,51 @@ async function sendChat() {
 function addScheduleOption(schedule) {
   const { name, rationale, totalCredits, courses } = schedule;
 
-  // Convert LLM format → format renderSavedScheduleOnCalendar expects
+  // Convert LLM format -> format renderSavedScheduleOnCalendar expects (new courses only)
   const calendarCourses = courses.map((c) => ({
     subject: c.course.split(" ")[0],
     courseNumber: c.course.split(" ")[1],
     crn: c.crn,
     days: c.days,
-    // Convert "1230" → "12:30" for the calendar renderer
     beginTime: c.start ? c.start.slice(0, 2) + ":" + c.start.slice(2) : null,
     endTime: c.end ? c.end.slice(0, 2) + ":" + c.end.slice(2) : null,
   }));
+
+  // Prepend already-registered courses so preview/save shows the full picture
+  const registeredAsCalendar = cachedRegisteredCourses.map((r) => ({
+    subject: r.course.split(" ")[0],
+    courseNumber: r.course.split(" ")[1],
+    crn: r.crn,
+    days: r.days,
+    beginTime: r.start ? r.start.slice(0, 2) + ":" + r.start.slice(2) : null,
+    endTime: r.end ? r.end.slice(0, 2) + ":" + r.end.slice(2) : null,
+  }));
+  const fullCalendarCourses = [...registeredAsCalendar, ...calendarCourses];
+
+  // Show already-registered courses at top of chat bubble so the full picture is clear
+  const registeredLines = cachedRegisteredCourses
+    .map((r) => {
+      const time = r.days
+        ? r.days.join("/") +
+          " " +
+          formatChatTime(r.start) +
+          "-" +
+          formatChatTime(r.end)
+        : "Online";
+      return (
+        '<div style="margin:4px 0;opacity:0.6;border-left:2px solid #aaa;padding-left:6px">' +
+        "<strong>" +
+        r.course +
+        "</strong> - " +
+        r.title +
+        "<br>" +
+        '<span style="font-size:11px">Already registered - ' +
+        time +
+        "</span>" +
+        "</div>"
+      );
+    })
+    .join("");
 
   const courseLines = courses
     .map((c) => {
@@ -685,33 +880,51 @@ function addScheduleOption(schedule) {
         : c.days?.join("/") +
           " " +
           formatChatTime(c.start) +
-          "–" +
+          "-" +
           formatChatTime(c.end);
-      return `<div style="margin:4px 0">
-      <strong>${c.course}</strong> — ${c.title}<br>
-      <span style="font-size:11px;opacity:0.8">CRN: ${c.crn} · ${time} · ${c.requirementSatisfied}</span>
-    </div>`;
+      return (
+        '<div style="margin:4px 0">' +
+        "<strong>" +
+        c.course +
+        "</strong> - " +
+        c.title +
+        "<br>" +
+        '<span style="font-size:11px;opacity:0.8">CRN: ' +
+        c.crn +
+        " - " +
+        time +
+        " - " +
+        c.requirementSatisfied +
+        "</span>" +
+        "</div>"
+      );
     })
     .join("");
 
   const div = document.createElement("div");
   div.className = "chat-message ai";
-  div.innerHTML = `
-    <div class="sender">${name} · ${totalCredits} credits</div>
-    <div style="font-size:11px;margin-bottom:8px;opacity:0.85">${rationale}</div>
-    ${courseLines}
-    <br>
-    <button class="save-schedule-btn">💾 Save</button>
-    <button class="save-schedule-btn preview-btn" style="margin-left:6px">👁 Preview</button>
-  `;
+  div.innerHTML =
+    '<div class="sender">' +
+    name +
+    " - " +
+    totalCredits +
+    " credits</div>" +
+    '<div style="font-size:11px;margin-bottom:8px;opacity:0.85">' +
+    rationale +
+    "</div>" +
+    registeredLines +
+    courseLines +
+    "<br>" +
+    '<button class="save-schedule-btn">Save</button>' +
+    '<button class="save-schedule-btn preview-btn" style="margin-left:6px">Preview</button>';
 
   div.querySelector(".save-schedule-btn").addEventListener("click", () => {
-    saveSchedule(name, calendarCourses);
-    addMessage("system", `"${name}" saved.`);
+    saveSchedule(name, fullCalendarCourses);
+    addMessage("system", '"' + name + '" saved.');
   });
 
   div.querySelector(".preview-btn").addEventListener("click", () => {
-    renderSavedScheduleOnCalendar({ name, courses: calendarCourses });
+    renderSavedScheduleOnCalendar({ name, courses: fullCalendarCourses });
   });
 
   $("chatMessages").appendChild(div);
