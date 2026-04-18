@@ -263,6 +263,8 @@ let cachedRegisteredTerm = null; // which term those registered courses belong t
       currentStudent = student;
       $("studentName").textContent =
         student.name + " | " + student.major + " | " + student.degree;
+      const ss = document.getElementById("sidebarStudent");
+      if (ss) ss.innerHTML = "<strong>" + student.name + "</strong><br>" + student.major + " | " + student.degree;
     } else {
       $("studentName").textContent = "Not logged in";
     }
@@ -496,6 +498,8 @@ function buildEmptyCalendar() {
 
 function renderCoursesOnCalendar(events) {
   buildEmptyCalendar();
+  updateWeekHours(events);
+  updateOverviewFromEvents(events);
   const seen = new Set();
   for (const event of events) {
     const startDate = new Date(event.start);
@@ -518,8 +522,11 @@ function renderCoursesOnCalendar(events) {
     const cell = $("cell-" + dayIdx + "-" + bh);
     if (!cell) continue;
 
+    const courseKey = event.subject + event.courseNumber;
     const block = document.createElement("div");
-    block.className = "course-block";
+    block.className = "course-block " + getChipForCourse(courseKey);
+    block.setAttribute("data-course-key", courseKey);
+    block.setAttribute("data-crn", event.crn || "");
     block.style.top = startOffset + "px";
     block.style.height = height + "px";
     block.innerHTML =
@@ -976,3 +983,140 @@ function addMessage(type, text) {
   $("chatMessages").appendChild(div);
   $("chatMessages").scrollTop = $("chatMessages").scrollHeight;
 }
+
+// ============================================================
+// COURSE COLOR SYSTEM
+// ============================================================
+const TXST_CHIPS = ["chip-0","chip-1","chip-2","chip-3","chip-4","chip-5","chip-6","chip-7"];
+
+function getCourseColors() {
+  try { return JSON.parse(localStorage.getItem("bobcat_course_colors") || "{}"); } catch(e) { return {}; }
+}
+function saveCourseColors(map) {
+  try { localStorage.setItem("bobcat_course_colors", JSON.stringify(map)); } catch(e) {}
+}
+function getChipForCourse(courseKey) {
+  const map = getCourseColors();
+  if (!map[courseKey]) {
+    const used = Object.values(map);
+    const available = TXST_CHIPS.filter(c => !used.includes(c));
+    const pool = available.length > 0 ? available : TXST_CHIPS;
+    map[courseKey] = pool[Math.floor(Math.random() * pool.length)];
+    saveCourseColors(map);
+  }
+  return map[courseKey];
+}
+
+// ============================================================
+// WEEK HOURS
+// ============================================================
+function updateWeekHours(events) {
+  const seen = new Set();
+  let totalHours = 0;
+  for (const ev of events) {
+    if (!ev.crn || seen.has(ev.crn)) continue;
+    seen.add(ev.crn);
+    totalHours += (ev.creditHours || ev.credits || 3);
+  }
+  const el = document.getElementById("weekHours");
+  if (el && totalHours > 0) {
+    el.innerHTML = "<strong>" + totalHours + " credit hours</strong> this semester";
+  }
+}
+
+// ============================================================
+// OVERVIEW PANEL
+// ============================================================
+function updateOverviewFromEvents(events) {
+  const seen = new Set();
+  const courses = [];
+  const waitlisted = [];
+  for (const ev of events) {
+    if (seen.has(ev.crn)) continue;
+    seen.add(ev.crn);
+    if (ev.registrationStatus && ev.registrationStatus.toLowerCase().includes("wait")) {
+      waitlisted.push(ev);
+    } else {
+      courses.push(ev);
+    }
+  }
+  const totalCourses = courses.length + waitlisted.length;
+  const totalHours = [...courses, ...waitlisted].reduce((sum, c) => sum + (c.creditHours || c.credits || 3), 0);
+  let onTrackLabel = "";
+  if (totalHours >= 15) onTrackLabel = '<span class="ov-badge ov-green">Ahead of pace</span>';
+  else if (totalHours >= 12) onTrackLabel = '<span class="ov-badge ov-blue">On track</span>';
+  else if (totalHours > 0) onTrackLabel = '<span class="ov-badge ov-amber">Light semester</span>';
+
+  const panel = document.getElementById("overviewPanel");
+  if (!panel) return;
+
+  panel.innerHTML = `
+    <div class="ov-row">
+      <div class="ov-stat">
+        <div class="ov-val">${totalCourses}</div>
+        <div class="ov-label">Courses registered</div>
+        <div class="ov-sub">${totalHours} credit hours ${onTrackLabel}</div>
+      </div>
+      ${waitlisted.length > 0 ? `
+      <div class="ov-stat">
+        <div class="ov-val ov-red">${waitlisted.length}</div>
+        <div class="ov-label">Waitlisted</div>
+      </div>` : ""}
+    </div>
+    <div class="ov-divider"></div>
+    <div class="ov-row">
+      <div class="ov-stat" style="width:100%">
+        <div class="ov-sub" style="font-size:11px;color:var(--text3)">GPA & credits load after degree audit runs</div>
+      </div>
+    </div>
+  `;
+}
+
+function toggleOverview() {
+  const body = document.getElementById("overviewPanel");
+  const chevron = document.getElementById("overviewChevron");
+  if (!body || !chevron) return;
+  const collapsed = body.style.display === "none";
+  body.style.display = collapsed ? "block" : "none";
+  chevron.textContent = collapsed ? "\u25be" : "\u25b8";
+}
+
+// ============================================================
+// SIDEBAR + EVENT WIRING
+// ============================================================
+document.addEventListener("DOMContentLoaded", () => {
+  const hamburger = document.getElementById("hamburgerBtn");
+  const sidebar = document.getElementById("sidebar");
+  const overlay = document.getElementById("sidebarOverlay");
+  const closeBtn = document.getElementById("sidebarClose");
+
+  function openSidebar() {
+    if (sidebar) sidebar.classList.add("open");
+    if (overlay) overlay.classList.add("active");
+  }
+  function closeSidebar() {
+    if (sidebar) sidebar.classList.remove("open");
+    if (overlay) overlay.classList.remove("active");
+  }
+
+  if (hamburger) hamburger.addEventListener("click", openSidebar);
+  if (closeBtn) closeBtn.addEventListener("click", closeSidebar);
+  if (overlay) overlay.addEventListener("click", closeSidebar);
+
+  const navRegister = document.getElementById("navRegister");
+  const navAudit = document.getElementById("navAudit");
+
+  if (navRegister) navRegister.addEventListener("click", (e) => {
+    e.preventDefault();
+    chrome.tabs.create({ url: "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/classRegistration" });
+    closeSidebar();
+  });
+  if (navAudit) navAudit.addEventListener("click", (e) => {
+    e.preventDefault();
+    chrome.tabs.create({ url: "https://dw-prod.ec.txstate.edu/responsiveDashboard/worksheets/WEB31" });
+    closeSidebar();
+  });
+
+  const toggle = document.getElementById("overviewToggle");
+  if (toggle) toggle.addEventListener("click", toggleOverview);
+});

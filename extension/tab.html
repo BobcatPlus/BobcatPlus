@@ -6,56 +6,114 @@
     <link rel="stylesheet" href="css/tab.css" />
   </head>
   <body>
+
+    <!-- Sidebar overlay + drawer -->
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+    <div class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <span>Bobcat Plus</span>
+        <button class="sidebar-close" id="sidebarClose">✕</button>
+      </div>
+      <nav class="sidebar-nav">
+        <a class="sidebar-link" id="navRegister" href="#">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          Register for Classes
+        </a>
+        <a class="sidebar-link" id="navAudit" href="#">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          Degree Audit
+        </a>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="sidebar-student" id="sidebarStudent"></div>
+      </div>
+    </div>
+
+    <!-- Course detail modal -->
+    <div class="modal-overlay" id="modalOverlay"></div>
+    <div class="modal" id="courseModal">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title" id="modalTitle"></div>
+          <div class="modal-sub" id="modalSub"></div>
+        </div>
+        <button class="modal-close" id="modalClose">✕</button>
+      </div>
+      <div class="modal-body" id="modalBody"></div>
+      <div class="modal-footer">
+        <button class="modal-btn primary" id="modalEmail">✉ Email Instructor</button>
+        <div class="color-picker-row" id="colorPickerRow"></div>
+      </div>
+    </div>
+
+    <!-- Top bar -->
     <div class="top-bar">
-      <h1>Bobcat Plus</h1>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <button class="hamburger" id="hamburgerBtn">
+          <span></span><span></span><span></span>
+        </button>
+        <h1>Bobcat Plus</h1>
+      </div>
       <div class="controls">
         <span class="student-name" id="studentName">Loading...</span>
         <select id="termSelect"></select>
       </div>
     </div>
 
+    <!-- Main layout -->
     <div class="main">
       <div class="calendar-panel">
+        <div class="week-header">
+          <div class="week-title">Week at a Glance</div>
+          <div class="week-hours" id="weekHours"></div>
+        </div>
         <table class="calendar" id="calendar"></table>
       </div>
+
       <div class="right-panel">
-        <div class="saved-section">
-          <div class="saved-header">
-            <span>Schedules</span>
+        <!-- Overview -->
+        <div class="overview-section" id="overviewSection">
+          <div class="overview-header" id="overviewToggle">
+            <span>Overview</span>
+            <span class="overview-chevron" id="overviewChevron">▾</span>
           </div>
-          <div class="view-registered active" id="viewRegistered">
-            Current Registered Schedule
-          </div>
-          <div class="saved-list" id="savedList">
-            <div class="saved-empty" id="savedEmpty">
-              No saved schedules yet. Use the chat to generate one.
-            </div>
+          <div class="overview-body" id="overviewPanel">
+            <div class="ov-sub" style="color:var(--text3);font-size:11px;padding:4px 0;">Load a schedule to see your overview</div>
           </div>
         </div>
+
+        <!-- Saved schedules -->
+        <div class="saved-section">
+          <div class="saved-header"><span>Schedules</span></div>
+          <div class="view-registered active" id="viewRegistered">Current Registered Schedule</div>
+          <div class="saved-list" id="savedList">
+            <div class="saved-empty" id="savedEmpty">No saved schedules for this term.</div>
+          </div>
+        </div>
+
+        <!-- Chat -->
         <div class="chat-section">
           <div class="chat-header">Schedule Planner</div>
           <div class="chat-messages" id="chatMessages">
             <div class="chat-message system">
               <div class="sender">System</div>
-              Select a future semester and describe your preferences to build a
-              schedule.
+              Select a future semester and describe your preferences to build a schedule.
             </div>
           </div>
           <div class="chat-input-area">
-            <textarea
-              class="chat-input"
-              id="chatInput"
-              rows="2"
-              placeholder="e.g. I don't like early mornings, keep Fridays light..."
-            ></textarea>
-            <button class="chat-send" id="chatSend">Send</button>
+            <textarea class="chat-input" id="chatInput" rows="2" placeholder="e.g. I don't like early mornings, keep Fridays light..."></textarea>
+            <button class="chat-send" id="chatSend">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="22" y1="2" x2="11" y2="13"></line>
+                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+              </svg>
+            </button>
           </div>
         </div>
       </div>
     </div>
 
     <div class="status-bar" id="statusBar">Ready</div>
-
     <script src="tab.js"></script>
   </body>
 </html>
