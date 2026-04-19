@@ -371,3 +371,31 @@ body {
 .calendar-panel::-webkit-scrollbar-button {
   display: none;
 }
+
+.calendar-panel::-webkit-scrollbar-thumb {
+  min-height: 0;
+  max-height: 20px;
+}
+/* TXST Logo Header Enhancements */
+.sidebar-header {
+  border-bottom: 2px solid var(--gold);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+}
+
+.top-bar {
+  border-bottom: 2px solid var(--gold);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+}
+
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.header-logo {
+  height: 28px;
+  width: auto;
+  object-fit: contain;
+  filter: brightness(0) invert(1);
+}
