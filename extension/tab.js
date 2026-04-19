@@ -1120,3 +1120,38 @@ document.addEventListener("DOMContentLoaded", () => {
   const toggle = document.getElementById("overviewToggle");
   if (toggle) toggle.addEventListener("click", toggleOverview);
 });
+
+// ============================================================
+// RIGHT PANEL RESIZE
+// ============================================================
+document.addEventListener("DOMContentLoaded", () => {
+  const handle = document.getElementById("resizeHandle");
+  const panel = document.getElementById("rightPanel");
+  if (!handle || !panel) return;
+
+  let dragging = false;
+  let startX = 0;
+  let startWidth = 0;
+
+  handle.addEventListener("mousedown", (e) => {
+    dragging = true;
+    startX = e.clientX;
+    startWidth = panel.offsetWidth;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  });
+
+  document.addEventListener("mousemove", (e) => {
+    if (!dragging) return;
+    const delta = startX - e.clientX;
+    const newWidth = Math.min(600, Math.max(200, startWidth + delta));
+    panel.style.width = newWidth + "px";
+  });
+
+  document.addEventListener("mouseup", () => {
+    if (!dragging) return;
+    dragging = false;
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+  });
+});
