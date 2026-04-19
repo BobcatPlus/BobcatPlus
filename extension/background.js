@@ -997,23 +997,9 @@ async function runAnalysis(sendUpdate, termCodeOverride) {
   const blocked = [];
   const notOffered = [];
 
-  // Search for sections
-  for (let i = 0; i < needed.length; i++) {
-    const course = needed[i];
-    sendUpdate({
-      type: "status",
-      message:
-        "Searching " +
-        course.subject +
-        " " +
-        course.courseNumber +
-        " (" +
-        (i + 1) +
-        "/" +
-        needed.length +
-        ")",
-    });
-
+  // Search courses sequentially — Banner session state cannot handle parallel searches
+  sendUpdate({ type: "status", message: "Searching " + needed.length + " courses..." });
+  for (const course of needed) {
     try {
       const sections = await searchCourse(
         course.subject,
@@ -1029,63 +1015,48 @@ async function runAnalysis(sendUpdate, termCodeOverride) {
     } catch (e) {
       notOffered.push(course);
     }
-    await new Promise((r) => setTimeout(r, 1000));
   }
 
-  // Check prereqs and fetch descriptions for eligible courses
+  // Check prereqs and fetch descriptions in parallel, with description caching
   const coursesWithSections = needed.filter((c) => c.sections);
-  for (let i = 0; i < coursesWithSections.length; i++) {
-    const course = coursesWithSections[i];
-    sendUpdate({
-      type: "status",
-      message:
-        "Checking prereqs for " +
-        course.subject +
-        " " +
-        course.courseNumber +
-        " (" +
-        (i + 1) +
-        "/" +
-        coursesWithSections.length +
-        ")",
-    });
-
-    try {
-      const result = await checkPrereqs(
-        course.crn,
-        term.code,
-        completed,
-        inProgress,
-      );
-      if (result.met) {
-        sendUpdate({
-          type: "status",
-          message:
-            "Fetching descriptions for " +
-            course.subject +
-            " " +
-            course.courseNumber +
-            "...",
-        });
-        for (const section of course.sections) {
-          section.courseDescription = await getCourseDescription(
-            section.courseReferenceNumber,
-            term.code,
+  const descCache = {};
+  sendUpdate({
+    type: "status",
+    message: "Checking prerequisites for " + coursesWithSections.length + " courses...",
+  });
+  await Promise.all(
+    coursesWithSections.map(async (course) => {
+      try {
+        const result = await checkPrereqs(
+          course.crn,
+          term.code,
+          completed,
+          inProgress,
+        );
+        if (result.met) {
+          const cacheKey = course.subject + course.courseNumber;
+          if (!descCache[cacheKey]) {
+            descCache[cacheKey] = await getCourseDescription(
+              course.crn,
+              term.code,
+            );
+          }
+          course.sections.forEach(
+            (s) => (s.courseDescription = descCache[cacheKey]),
           );
+          eligible.push(course);
+          sendUpdate({ type: "eligible", data: course });
+        } else {
+          course.missingPrereqs = result.missing;
+          blocked.push(course);
+          sendUpdate({ type: "blocked", data: course });
         }
+      } catch (e) {
         eligible.push(course);
         sendUpdate({ type: "eligible", data: course });
-      } else {
-        course.missingPrereqs = result.missing;
-        blocked.push(course);
-        sendUpdate({ type: "blocked", data: course });
       }
-    } catch (e) {
-      eligible.push(course);
-      sendUpdate({ type: "eligible", data: course });
-    }
-    await new Promise((r) => setTimeout(r, 500));
-  }
+    }),
+  );
 
   sendUpdate({ type: "done", data: { eligible, blocked, notOffered, needed } });
 }
