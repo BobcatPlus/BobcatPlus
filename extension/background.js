@@ -136,22 +136,852 @@ const SUBJECT_MAP = {
 };
 
 // --- Step 1: Fetch student info ---
+function trimStr(v) {
+  return v != null && String(v).trim() !== "" ? String(v).trim() : "";
+}
+
+function pickGpaNumber(...vals) {
+  for (const v of vals) {
+    if (v == null || v === "") continue;
+    const n = parseFloat(String(v).replace(/,/g, ""));
+    if (Number.isFinite(n) && n >= 0 && n <= 4.5) return n;
+  }
+  return null;
+}
+
 async function getStudentInfo() {
   const response = await fetch(
     "https://dw-prod.ec.txstate.edu/responsiveDashboard/api/students/myself",
     { credentials: "include" },
   );
   const me = await response.json();
-  const student = me._embedded.students[0];
+  const student = me._embedded?.students?.[0];
+  if (!student) throw new Error("No student record");
+  const goal = student.goals?.[0];
+  if (!goal) throw new Error("No academic goal");
+
+  const details = goal.details || [];
+  const detailDesc = (key) =>
+    details.find((d) => d.code?.key === key)?.value?.description ||
+    details.find((d) => d.code?.key === key)?.value?.title ||
+    "";
+
+  const minorRaw = detailDesc("MINOR");
+
   return {
     id: student.id,
     name: student.name,
-    school: student.goals[0].school.key,
-    degree: student.goals[0].degree.key,
-    major:
-      student.goals[0].details.find((d) => d.code.key === "MAJOR")?.value
-        .description || "",
+    school: goal.school.key,
+    degree: goal.degree.key,
+    major: detailDesc("MAJOR") || "",
+    minor: minorRaw ? minorRaw : null,
+    cumulativeGPA: pickGpaNumber(
+      student.cumulativeGPA,
+      student.cumulativeGpa,
+      student.gpa,
+    ),
+    institutionalGPA: pickGpaNumber(
+      student.institutionalGPA,
+      student.institutionalGpa,
+      student.bannerGPA,
+      student.bannerGpa,
+      student.institutionGPA,
+      student.gpaInstitution,
+    ),
+    classification:
+      trimStr(student.academicLevel?.description) ||
+      trimStr(student.level?.description) ||
+      trimStr(student.studentLevelDescription) ||
+      trimStr(student.classStanding) ||
+      trimStr(student.classification) ||
+      "",
   };
+}
+
+function auditNum(v) {
+  if (v == null || v === "") return 0;
+  const n = parseFloat(String(v).replace(/,/g, ""));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function blockHeading(b) {
+  return String(
+    b.title || b.label || b.blockLabel || b.blockTitle || "",
+  ).trim();
+}
+
+function parsePercentComplete(v) {
+  if (v == null || v === "") return null;
+  const n = parseFloat(String(v).replace(/%/g, "").trim());
+  return Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : null;
+}
+
+function reqCreditsFromNode(node) {
+  return auditNum(
+    node.creditsRequired ??
+      node.creditHoursRequired ??
+      node.requiredCredits ??
+      node.minimumCreditsRequired ??
+      node.minimumCredits ??
+      node.hoursRequired ??
+      node.creditsTotal ??
+      node.totalCreditsRequired ??
+      node.degreeCreditsRequired ??
+      node.hoursInProgram,
+  );
+}
+
+function appliedCreditsFromNode(node) {
+  return auditNum(
+    node.creditsApplied ??
+      node.creditHoursApplied ??
+      node.creditsEarned ??
+      node.appliedCredits ??
+      node.hoursEarned ??
+      node.totalCreditsApplied ??
+      node.degreeCreditsApplied ??
+      node.creditHoursIncluded,
+  );
+}
+
+/**
+ * Degree Works often labels fields *Credits*Required / *Credits*Applied (screenshot parity).
+ * Picks the strongest req/applied pair on one object without walking into arrays.
+ */
+function findCreditPairOnObject(o) {
+  if (!o || typeof o !== "object" || Array.isArray(o)) return null;
+  let req = 0;
+  let app = 0;
+  for (const [k, v] of Object.entries(o)) {
+    const kl = k.toLowerCase();
+    if (!/credit|hour/i.test(kl)) continue;
+    const n = auditNum(v);
+    if (!Number.isFinite(n) || n <= 0) continue;
+    if (/required|minimum|mandatory/i.test(kl)) req = Math.max(req, n);
+    if (/applied|complete|earned|satisfied/i.test(kl)) app = Math.max(app, n);
+  }
+  if (req > 0) return { req, app };
+  return null;
+}
+
+/** stillNeeded + minimumCredits (Degree Works degree block). */
+function findProgressFromStillNeeded(o) {
+  if (!o || typeof o !== "object" || Array.isArray(o)) return null;
+  const min = auditNum(
+    o.minimumCredits ??
+      o.minimumCreditHours ??
+      o.degreeCreditsRequired ??
+      o.totalDegreeCredits ??
+      o.creditsRequiredForDegree,
+  );
+  const still = auditNum(
+    o.stillNeeded ??
+      o.stillNeededCredits ??
+      o.creditsStillNeeded ??
+      o.degreeCreditsStillNeeded,
+  );
+  if (min > 0 && Number.isFinite(still) && still >= 0 && still <= min * 2) {
+    const applied = Math.max(0, min - still);
+    return { req: min, app: applied };
+  }
+  return null;
+}
+
+function findCreditPairDeep(o, depth = 0, maxDepth = 5) {
+  if (!o || typeof o !== "object" || depth > maxDepth) return null;
+  const still = findProgressFromStillNeeded(o);
+  if (still) return still;
+  const direct = findCreditPairOnObject(o);
+  if (direct) return direct;
+  for (const v of Object.values(o)) {
+    if (!v || typeof v !== "object") continue;
+    if (Array.isArray(v)) {
+      for (const el of v) {
+        if (el && typeof el === "object") {
+          const p = findCreditPairDeep(el, depth + 1, maxDepth);
+          if (p) return p;
+        }
+      }
+      continue;
+    }
+    const p = findCreditPairDeep(v, depth + 1, maxDepth);
+    if (p) return p;
+  }
+  return null;
+}
+
+/** Match exactly “Freshman” / “Senior” label somewhere in the audit tree. */
+function findExactStandingLabel(root, maxVisit = 500) {
+  const re = /^(Freshman|Sophomore|Junior|Senior)$/i;
+  const stack = [root];
+  let visit = 0;
+  while (stack.length && visit < maxVisit) {
+    const o = stack.pop();
+    visit++;
+    if (!o || typeof o !== "object") continue;
+    for (const v of Object.values(o)) {
+      if (typeof v === "string") {
+        const t = v.trim();
+        if (t.length < 24 && re.test(t)) {
+          const m = t.match(re);
+          if (m)
+            return m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
+        }
+      } else if (Array.isArray(v)) {
+        for (const el of v) {
+          if (el && typeof el === "object") stack.push(el);
+        }
+      } else if (v && typeof v === "object") {
+        stack.push(v);
+      }
+    }
+  }
+  return "";
+}
+
+function pickInstitutionalCreditsForClassification(audit) {
+  const ci = audit.classInformation;
+  if (!ci || typeof ci !== "object") return null;
+  for (const [k, v] of Object.entries(ci)) {
+    if (!/credit|hour|hrs/i.test(k.toLowerCase())) continue;
+    if (/transfer|transferr|transferr?ing/i.test(k.toLowerCase())) continue;
+    if (!/inst|txst|texas|resident|degree/i.test(k.toLowerCase())) continue;
+    const n = auditNum(v);
+    if (n >= 12 && n <= 250) return n;
+  }
+  return null;
+}
+
+/** Sum credits + weighted progress from nested rule trees (Ellucian nested ruleArray). */
+function aggregateRequirementTree(nodes) {
+  let totalReq = 0;
+  let earnedWeighted = 0;
+  for (const node of nodes || []) {
+    if (node.ruleArray && node.ruleArray.length > 0) {
+      const sub = aggregateRequirementTree(node.ruleArray);
+      totalReq += sub.totalReq;
+      earnedWeighted += sub.earnedWeighted;
+      continue;
+    }
+    const req = reqCreditsFromNode(node);
+    const pct = parsePercentComplete(node.percentComplete);
+    if (req > 0) {
+      totalReq += req;
+      if (pct != null) {
+        earnedWeighted += req * (pct / 100);
+      } else {
+        earnedWeighted += Math.min(appliedCreditsFromNode(node), req);
+      }
+    }
+  }
+  return { totalReq, earnedWeighted };
+}
+
+/** Prefer nested rules so we do not double-count block summaries + rule leaves. */
+function aggregateBlockProgress(block) {
+  const still = findProgressFromStillNeeded(block);
+  if (still && still.req > 0) {
+    return {
+      totalReq: still.req,
+      earnedWeighted: Math.min(still.app, still.req),
+    };
+  }
+
+  const sub = aggregateRequirementTree(block.ruleArray);
+  if (sub.totalReq > 0) return sub;
+
+  let headReq = reqCreditsFromNode(block);
+  let applied = appliedCreditsFromNode(block);
+  if (headReq <= 0) {
+    const pair = findCreditPairOnObject(block);
+    if (pair) {
+      headReq = pair.req;
+      applied = Math.max(applied, pair.app);
+    }
+  }
+  if (headReq <= 0) {
+    const deep = findCreditPairDeep(block, 0, 5);
+    if (deep && deep.req > 0) {
+      headReq = deep.req;
+      applied = Math.max(applied, deep.app);
+    }
+  }
+  const pctBlock = parsePercentComplete(block.percentComplete);
+  if (headReq <= 0) return { totalReq: 0, earnedWeighted: 0 };
+
+  let earnedWeighted = 0;
+  if (pctBlock != null) earnedWeighted += headReq * (pctBlock / 100);
+  else earnedWeighted += Math.min(applied, headReq);
+  return { totalReq: headReq, earnedWeighted };
+}
+
+/**
+ * Combined progress from all top-level audit blocks (credits live under ruleArray).
+ * Minor flag comes from Degree Works titles and the student goal.
+ */
+function aggregateMajorMinorProgress(audit, studentMinorHint) {
+  const blocks = audit.blockArray || [];
+  let hasMinor = !!(
+    studentMinorHint && String(studentMinorHint).trim()
+  );
+
+  let useReq = 0;
+  let useEarned = 0;
+
+  for (const b of blocks) {
+    const titleLower = blockHeading(b).toLowerCase();
+    if (/\bminor\b/i.test(titleLower)) hasMinor = true;
+
+    const agg = aggregateBlockProgress(b);
+    useReq += agg.totalReq;
+    useEarned += agg.earnedWeighted;
+  }
+
+  if (useReq <= 0) {
+    for (const b of blocks) {
+      const t = blockHeading(b).toLowerCase();
+      if (!/\bdegree|bachelor|master|program|major|minor\b/i.test(t)) continue;
+      const p =
+        findCreditPairDeep(b, 0, 6) ?? findCreditPairOnObject(b);
+      if (p && p.req > 0) {
+        useReq = p.req;
+        useEarned = Math.min(p.app, p.req);
+        break;
+      }
+    }
+  }
+  if (useReq <= 0) {
+    const rootPair =
+      findCreditPairDeep(audit, 0, 4) ?? findCreditPairOnObject(audit);
+    if (rootPair) {
+      useReq = rootPair.req;
+      useEarned = Math.min(rootPair.app, rootPair.req);
+    }
+  }
+
+  let pctFromDegreeBlock = null;
+  for (const b of blocks) {
+    const t = blockHeading(b).toLowerCase();
+    const pc = parsePercentComplete(b.percentComplete);
+    if (
+      pc != null &&
+      /\bdegree|bachelor|program|major|bulletin\b/i.test(t)
+    ) {
+      pctFromDegreeBlock = Math.round(pc);
+      break;
+    }
+  }
+
+  const progressPercent =
+    pctFromDegreeBlock != null
+      ? pctFromDegreeBlock
+      : useReq > 0
+        ? Math.min(100, Math.round((useEarned / useReq) * 100))
+        : null;
+  const creditsEarned =
+    useReq > 0 ? Math.round(useEarned * 100) / 100 : null;
+
+  return {
+    creditsRequiredMajorMinor: useReq > 0 ? useReq : null,
+    creditsEarnedMajorMinor: creditsEarned,
+    progressPercent,
+    hasMinor,
+  };
+}
+
+function pickGpaFromAuditObject(o, keys) {
+  if (!o || typeof o !== "object") return null;
+  for (const k of keys) {
+    if (o[k] != null && o[k] !== "") {
+      const n = pickGpaNumber(o[k]);
+      if (n != null) return n;
+    }
+  }
+  return null;
+}
+
+/** Heuristic key scan for Banner / Degree Works variants not covered by fixed key lists. */
+function scanObjectForGpas(o) {
+  let institutional = null;
+  let cumulative = null;
+  if (!o || typeof o !== "object") {
+    return { institutional, cumulative };
+  }
+  const entries = Object.entries(o);
+  for (const [k, v] of entries) {
+    if (v == null || v === "") continue;
+    const n = pickGpaNumber(v);
+    if (n == null) continue;
+    const kl = k.toLowerCase();
+    const looksInst =
+      /institution|institutional|banner|resident|texas|txst|gpa.?tx|tx\.?\s*state/i.test(
+        kl,
+      );
+    if (looksInst && institutional == null) institutional = n;
+  }
+  for (const [k, v] of entries) {
+    if (v == null || v === "") continue;
+    const n = pickGpaNumber(v);
+    if (n == null) continue;
+    const kl = k.toLowerCase();
+    const looksInst =
+      /institution|institutional|banner|resident|texas|txst|gpa.?tx|tx\.?\s*state/i.test(
+        kl,
+      );
+    const looksCum =
+      /cumulative|overall|combined|total(?!\s*credit)/i.test(kl) ||
+      /^gpaoverall$/i.test(k.replace(/\s/g, ""));
+    if (!looksInst && looksCum && cumulative == null) cumulative = n;
+  }
+  for (const [k, v] of entries) {
+    if (v == null || v === "") continue;
+    const n = pickGpaNumber(v);
+    if (n == null) continue;
+    if (/^gpa$/i.test(k) && cumulative == null) cumulative = n;
+  }
+  return { institutional, cumulative };
+}
+
+function scanObjectForClassification(o) {
+  if (!o || typeof o !== "object") return "";
+  for (const [k, v] of Object.entries(o)) {
+    if (typeof v !== "string" || !v.trim()) continue;
+    if (/^classification$/i.test(k)) return trimStr(v);
+  }
+  for (const [k, v] of Object.entries(o)) {
+    if (typeof v !== "string" || !v.trim()) continue;
+    if (!/(standing|level|class|year|rank)/i.test(k)) continue;
+    const t = trimStr(v);
+    if (
+      /freshman|sophomore|junior|senior|grad|undergrad|master|doctoral|first|second|third|fourth/i.test(
+        t,
+      )
+    ) {
+      return t;
+    }
+  }
+  return "";
+}
+
+function scanObjectForGpasDeep(o, depth = 0) {
+  let institutional = null;
+  let cumulative = null;
+  if (!o || typeof o !== "object" || depth > 2) {
+    return { institutional, cumulative };
+  }
+  const flat = scanObjectForGpas(o);
+  institutional = flat.institutional;
+  cumulative = flat.cumulative;
+  for (const [k, v] of Object.entries(o)) {
+    if (!v || typeof v !== "object" || Array.isArray(v)) continue;
+    if (/^classArray$/i.test(k)) continue;
+    const inner = scanObjectForGpasDeep(v, depth + 1);
+    institutional = institutional ?? inner.institutional;
+    cumulative = cumulative ?? inner.cumulative;
+  }
+  return { institutional, cumulative };
+}
+
+function extractGpaAndClassificationFromAudit(audit, studentRow) {
+  let gpaTexasState =
+    pickGpaFromAuditObject(audit, [
+      "institutionalGPA",
+      "institutionalGpa",
+      "bannerGPA",
+      "bannerGpa",
+      "gpaInstitution",
+      "instGPA",
+      "institutionGPA",
+      "txstGPA",
+      "txstGpa",
+      "gpaTxst",
+    ]) ?? studentRow.institutionalGPA;
+  let gpaOverall =
+    pickGpaFromAuditObject(audit, [
+      "cumulativeGPA",
+      "cumulativeGpa",
+      "overallGPA",
+      "overallGpa",
+      "totalGPA",
+      "combinedGPA",
+      "gpa",
+      "gpaOverall",
+    ]) ?? studentRow.cumulativeGPA;
+
+  const auditDeep = scanObjectForGpasDeep(audit);
+  gpaTexasState = gpaTexasState ?? auditDeep.institutional;
+  gpaOverall = gpaOverall ?? auditDeep.cumulative;
+
+  let classification =
+    trimStr(audit.classification) ||
+    trimStr(audit.studentClassification) ||
+    trimStr(audit.studentClassDescription) ||
+    trimStr(audit.classStandingDescription) ||
+    trimStr(audit.academicLevelDescription) ||
+    trimStr(studentRow.classification);
+
+  for (const hdr of [
+    audit.studentHeader,
+    audit.header,
+    audit.auditHeader,
+    audit.degreeHeader,
+    audit.studentSummary,
+  ]) {
+    if (!hdr || typeof hdr !== "object") continue;
+    const hGpa = scanObjectForGpas(hdr);
+    gpaTexasState = gpaTexasState ?? hGpa.institutional;
+    gpaOverall = gpaOverall ?? hGpa.cumulative;
+    classification =
+      classification ||
+      scanObjectForClassification(hdr) ||
+      trimStr(hdr.classification);
+  }
+
+  const ci = audit.classInformation;
+  if (ci && typeof ci === "object") {
+    gpaTexasState =
+      gpaTexasState ??
+      pickGpaFromAuditObject(ci, [
+        "institutionalGPA",
+        "institutionalGpa",
+        "instGPA",
+        "institutionGPA",
+      ]);
+    gpaOverall =
+      gpaOverall ??
+      pickGpaFromAuditObject(ci, [
+        "cumulativeGPA",
+        "cumulativeGpa",
+        "gpa",
+        "overallGPA",
+        "overallGpa",
+      ]);
+
+    const scanned = scanObjectForGpas(ci);
+    gpaTexasState = gpaTexasState ?? scanned.institutional;
+    gpaOverall = gpaOverall ?? scanned.cumulative;
+
+    classification =
+      classification ||
+      scanObjectForClassification(ci) ||
+      trimStr(ci.studentClassDescription) ||
+      trimStr(ci.classStandingDescription);
+
+    if (Array.isArray(ci.classArray)) {
+      for (const row of ci.classArray) {
+        if (!row || typeof row !== "object") continue;
+        const rScan = scanObjectForGpas(row);
+        gpaTexasState = gpaTexasState ?? rScan.institutional;
+        gpaOverall = gpaOverall ?? rScan.cumulative;
+        if (!classification) {
+          classification =
+            scanObjectForClassification(row) ||
+            trimStr(row.classStanding) ||
+            trimStr(row.academicLevelDescription);
+        }
+      }
+    }
+  }
+
+  const si = audit.studentInformation;
+  if (si && typeof si === "object") {
+    gpaTexasState =
+      gpaTexasState ??
+      pickGpaFromAuditObject(si, [
+        "institutionalGPA",
+        "institutionalGpa",
+      ]);
+    gpaOverall =
+      gpaOverall ??
+      pickGpaFromAuditObject(si, [
+        "cumulativeGPA",
+        "cumulativeGpa",
+        "gpa",
+      ]);
+    const sScan = scanObjectForGpas(si);
+    gpaTexasState = gpaTexasState ?? sScan.institutional;
+    gpaOverall = gpaOverall ?? sScan.cumulative;
+    classification =
+      classification ||
+      trimStr(si.classStanding) ||
+      trimStr(si.studentClass) ||
+      scanObjectForClassification(si);
+  }
+
+  const deepGp = deepCollectGpasFromAudit(audit);
+  gpaTexasState = gpaTexasState ?? deepGp.institutional;
+  gpaOverall = gpaOverall ?? deepGp.cumulative;
+
+  return {
+    gpaTexasState,
+    gpaOverall,
+    classification,
+  };
+}
+
+function classifyByEarnedCredits(h) {
+  const n = Number(h);
+  if (!Number.isFinite(n)) return "";
+  if (n < 30) return "Freshman";
+  if (n < 60) return "Sophomore";
+  if (n < 90) return "Junior";
+  return "Senior";
+}
+
+async function fetchAuditJson(studentId, school, degree) {
+  const auditUrl =
+    "https://dw-prod.ec.txstate.edu/responsiveDashboard/api/audit?studentId=" +
+    studentId +
+    "&school=" +
+    school +
+    "&degree=" +
+    degree +
+    "&is-process-new=false&audit-type=AA&auditId=&include-inprogress=true&include-preregistered=true&aid-term=";
+  const response = await fetch(auditUrl, { credentials: "include" });
+  // #region agent log
+  fetch(
+    "http://127.0.0.1:7750/ingest/853901e6-d4c8-4b6b-b2a7-9b1a93c88eb5",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "782a56",
+      },
+      body: JSON.stringify({
+        sessionId: "782a56",
+        location: "background.js:fetchAuditJson",
+        message: "audit HTTP",
+        data: { ok: response.ok, status: response.status },
+        timestamp: Date.now(),
+        hypothesisId: "B",
+        runId: "pre-fix",
+      }),
+    },
+  ).catch(() => {});
+  // #endregion
+  if (!response.ok) return null;
+  const raw = await response.json();
+  return unwrapAuditPayload(raw);
+}
+
+/** API may return `{ data: audit }`, `{ result: audit }`, etc. */
+function unwrapAuditPayload(raw) {
+  if (!raw || typeof raw !== "object") return raw;
+  const candidates = [
+    raw.data,
+    raw.result,
+    raw.audit,
+    raw.payload,
+    raw._embedded?.audit,
+    raw.response,
+  ];
+  for (const c of candidates) {
+    if (
+      c &&
+      typeof c === "object" &&
+      (Array.isArray(c.blockArray) ||
+        c.classInformation ||
+        Array.isArray(c.studentHeader))
+    ) {
+      return c;
+    }
+  }
+  return raw;
+}
+
+/**
+ * Walk audit JSON for Banner/Degree Works GPA keys (handles nested header/summary).
+ * Only accepts numeric values in [0, 4.5] via pickGpaNumber.
+ */
+function deepCollectGpasFromAudit(audit, maxDepth = 12) {
+  let institutional = null;
+  let cumulative = null;
+
+  function consider(k, v) {
+    const kl = String(k).toLowerCase();
+    const n = pickGpaNumber(v);
+    if (n == null) return;
+
+    const skip =
+      /high\s*school|secondary|transfer\s*gpa|rank|percentile|size|cohort|email|phone|zip|salary|fee|cost|balance|hour|credit(?!\s*gpa)|sat|act/i.test(
+        kl,
+      );
+    if (skip) return;
+
+    const looksInst =
+      /\b(institution|institutional|banner|resident|texas|txst|gpa\s*inst|inst\s*gpa|inst\.?\s*gpa|local\s*gpa)\b/i.test(
+        kl,
+      ) ||
+      (/txst/i.test(kl) && /gpa|point/i.test(kl));
+    const looksCum =
+      /\b(cumulative|overall|combined|career|degree\s*gpa|gpa\s*overall|^gpa$)\b/i.test(
+        kl,
+      ) ||
+      (/gpa/i.test(kl) && /overall|cumulative|degree|program|total(?!\s*credit)/i.test(kl));
+
+    if (looksInst && institutional == null) institutional = n;
+    if (looksCum && cumulative == null) cumulative = n;
+  }
+
+  function walk(o, depth) {
+    if (!o || typeof o !== "object" || depth > maxDepth) return;
+    if (Array.isArray(o)) {
+      for (const item of o) walk(item, depth + 1);
+      return;
+    }
+    for (const [k, v] of Object.entries(o)) {
+      if (typeof v === "number" || typeof v === "string") consider(k, v);
+      else if (v && typeof v === "object") walk(v, depth + 1);
+    }
+  }
+
+  walk(audit, 0);
+
+  if (institutional == null && cumulative == null) {
+    const any = [];
+    function collectGpaKeys(o, depth) {
+      if (!o || typeof o !== "object" || depth > maxDepth) return;
+      for (const [k, v] of Object.entries(o)) {
+        if (/\bgpa\b/i.test(k)) {
+          const n = pickGpaNumber(v);
+          if (n != null) any.push(n);
+        } else if (v && typeof v === "object") {
+          if (Array.isArray(v)) {
+            for (const el of v) collectGpaKeys(el, depth + 1);
+          } else {
+            collectGpaKeys(v, depth + 1);
+          }
+        }
+      }
+    }
+    collectGpaKeys(audit, 0);
+    if (any.length >= 1) {
+      institutional = any[0];
+      cumulative = any.length > 1 ? any[any.length - 1] : any[0];
+    }
+  }
+
+  return { institutional, cumulative };
+}
+
+/**
+ * Degree audit summary for overview: major+minor credit progress, GPAs, classification.
+ */
+async function getDegreeAuditOverview() {
+  const student = await getStudentInfo();
+  const audit = await fetchAuditJson(student.id, student.school, student.degree);
+  if (!audit) {
+    const out = {
+      ...student,
+      creditsRequiredMajorMinor: null,
+      creditsEarnedMajorMinor: null,
+      progressPercent: null,
+      hasMinor: !!(student.minor && String(student.minor).trim()),
+      gpaTexasState: student.institutionalGPA,
+      gpaOverall: student.cumulativeGPA,
+      classification: student.classification || "",
+    };
+    // #region agent log
+    fetch(
+      "http://127.0.0.1:7750/ingest/853901e6-d4c8-4b6b-b2a7-9b1a93c88eb5",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Debug-Session-Id": "782a56",
+        },
+        body: JSON.stringify({
+          sessionId: "782a56",
+          location: "background.js:getDegreeAuditOverview",
+          message: "no audit json — student-only branch",
+          data: {
+            hasInstGpa: student.institutionalGPA != null,
+            hasCumGpa: student.cumulativeGPA != null,
+            clsLen: String(student.classification || "").length,
+          },
+          timestamp: Date.now(),
+          hypothesisId: "D",
+          runId: "pre-fix",
+        }),
+      },
+    ).catch(() => {});
+    // #endregion
+    return out;
+  }
+
+  const mm = aggregateMajorMinorProgress(audit, student.minor);
+  const gp = extractGpaAndClassificationFromAudit(audit, student);
+
+  let classification = gp.classification;
+  if (!classification) classification = findExactStandingLabel(audit);
+  if (!classification) {
+    const instCr = pickInstitutionalCreditsForClassification(audit);
+    if (instCr != null) classification = classifyByEarnedCredits(instCr);
+  }
+  if (!classification && mm.creditsEarnedMajorMinor != null) {
+    classification = classifyByEarnedCredits(mm.creditsEarnedMajorMinor);
+  }
+
+  const merged = {
+    ...student,
+    ...mm,
+    gpaTexasState: gp.gpaTexasState ?? student.institutionalGPA,
+    gpaOverall: gp.gpaOverall ?? student.cumulativeGPA,
+    classification,
+    hasMinor:
+      mm.hasMinor || !!(student.minor && String(student.minor).trim()),
+  };
+
+  const txNum = pickGpaNumber(
+    merged.gpaTexasState,
+    gp.gpaTexasState,
+    student.institutionalGPA,
+    student.institutionalGpa,
+    student.bannerGPA,
+    student.bannerGpa,
+  );
+  const ovNum = pickGpaNumber(
+    merged.gpaOverall,
+    gp.gpaOverall,
+    student.cumulativeGPA,
+    student.cumulativeGpa,
+    student.gpa,
+  );
+  if (txNum != null) merged.gpaTexasState = txNum;
+  if (ovNum != null) merged.gpaOverall = ovNum;
+  if (merged.gpaOverall == null && merged.gpaTexasState != null) {
+    merged.gpaOverall = merged.gpaTexasState;
+  }
+  // #region agent log
+  fetch(
+    "http://127.0.0.1:7750/ingest/853901e6-d4c8-4b6b-b2a7-9b1a93c88eb5",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "782a56",
+      },
+      body: JSON.stringify({
+        sessionId: "782a56",
+        location: "background.js:getDegreeAuditOverview",
+        message: "merged audit overview",
+        data: {
+          blockCount: Array.isArray(audit.blockArray)
+            ? audit.blockArray.length
+            : -1,
+          progressPercent: merged.progressPercent,
+          hasInstGpa: merged.gpaTexasState != null,
+          hasCumGpa: merged.gpaOverall != null,
+          clsLen: String(merged.classification || "").length,
+        },
+        timestamp: Date.now(),
+        hypothesisId: "C",
+        runId: "post-fix",
+      }),
+    },
+  ).catch(() => {});
+  // #endregion
+  return merged;
 }
 
 // --- Step 2: Fetch and parse degree audit ---
@@ -165,7 +995,7 @@ async function getAuditData(studentId, school, degree) {
     degree +
     "&is-process-new=false&audit-type=AA&auditId=&include-inprogress=true&include-preregistered=true&aid-term=";
   const response = await fetch(auditUrl, { credentials: "include" });
-  const audit = await response.json();
+  const audit = unwrapAuditPayload(await response.json());
 
   const completed = [];
   const inProgress = [];
@@ -970,20 +1800,9 @@ async function runAnalysis(sendUpdate, termCodeOverride) {
   });
 
   if (needed.length === 0) {
-    let termCode = termCodeOverride;
-    if (!termCode) {
-      const t = await getCurrentTerm();
-      termCode = t.code;
-    }
     sendUpdate({
       type: "done",
-      data: {
-        eligible: [],
-        blocked: [],
-        notOffered: [],
-        needed: [],
-        termCode,
-      },
+      data: { eligible: [], blocked: [], notOffered: [], needed: [] },
     });
     return;
   }
@@ -1009,10 +1828,7 @@ async function runAnalysis(sendUpdate, termCodeOverride) {
   const notOffered = [];
 
   // Search courses sequentially — Banner session state cannot handle parallel searches
-  sendUpdate({
-    type: "status",
-    message: "Searching " + needed.length + " courses...",
-  });
+  sendUpdate({ type: "status", message: "Searching " + needed.length + " courses..." });
   for (const course of needed) {
     try {
       const sections = await searchCourse(
@@ -1036,10 +1852,7 @@ async function runAnalysis(sendUpdate, termCodeOverride) {
   const descCache = {};
   sendUpdate({
     type: "status",
-    message:
-      "Checking prerequisites for " +
-      coursesWithSections.length +
-      " courses...",
+    message: "Checking prerequisites for " + coursesWithSections.length + " courses...",
   });
   await Promise.all(
     coursesWithSections.map(async (course) => {
@@ -1075,16 +1888,7 @@ async function runAnalysis(sendUpdate, termCodeOverride) {
     }),
   );
 
-  sendUpdate({
-    type: "done",
-    data: {
-      eligible,
-      blocked,
-      notOffered,
-      needed,
-      termCode: term.code,
-    },
-  });
+  sendUpdate({ type: "done", data: { eligible, blocked, notOffered, needed } });
 }
 
 // --- Get available terms ---
@@ -1348,11 +2152,18 @@ async function fetchPlanCalendar(term, planCourses) {
             String(d.getMonth() + 1).padStart(2, "0") +
             "-" +
             String(d.getDate()).padStart(2, "0");
+          // Keep full search row so modal can read meetingsFaculty, sequence, method, etc.
           events.push({
+            ...section,
+            courseReferenceNumber: crn,
             crn,
             subject: section.subject || subject,
             courseNumber: section.courseNumber || courseNumber,
-            title: section.courseTitle || "",
+            title:
+              section.courseTitle ||
+              section.courseDescription ||
+              section.title ||
+              "",
             start: ds + "T" + bh + ":" + bm + ":00-0500",
             end: ds + "T" + eh + ":" + em + ":00-0500",
           });
@@ -1610,7 +2421,6 @@ function openLoginPopup(sendResponse) {
 
     // Step 2: Registration session is warm — close popup and signal success
     if (dwDone && tab.url.includes(REG_SUCCESS)) {
-      cancelled = true;
       cleanup();
       setTimeout(() => {
         chrome.windows.remove(popupWindowId, () => {
@@ -1645,21 +2455,12 @@ function openLoginPopup(sendResponse) {
   );
 }
 
-// Serialize degree-audit / eligible runs — Banner registration session breaks under overlap.
-let analysisRunQueue = Promise.resolve();
-
 // --- Listen for messages from popup and full tab ---
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "runAnalysis") {
-    const gen = message.analysisGen ?? 0;
-    const term = message.term || null;
-    analysisRunQueue = analysisRunQueue
-      .then(() =>
-        runAnalysis((update) => {
-          chrome.runtime.sendMessage({ ...update, analysisGen: gen });
-        }, term),
-      )
-      .catch((e) => console.error("[BobcatPlus] runAnalysis:", e));
+    runAnalysis((update) => {
+      chrome.runtime.sendMessage(update);
+    }, message.term || null);
     sendResponse({ started: true });
   }
 
@@ -1680,6 +2481,39 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.action === "getDegreeAuditOverview") {
+    getDegreeAuditOverview()
+      .then((data) => sendResponse(data))
+      .catch((err) => {
+        // #region agent log
+        fetch(
+          "http://127.0.0.1:7750/ingest/853901e6-d4c8-4b6b-b2a7-9b1a93c88eb5",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Debug-Session-Id": "782a56",
+            },
+            body: JSON.stringify({
+              sessionId: "782a56",
+              location: "background.js:onMessage:getDegreeAuditOverview",
+              message: "getDegreeAuditOverview threw",
+              data: {
+                errName: err && err.name,
+                errMsgLen: err && err.message ? String(err.message).length : 0,
+              },
+              timestamp: Date.now(),
+              hypothesisId: "D",
+              runId: "pre-fix",
+            }),
+          },
+        ).catch(() => {});
+        // #endregion
+        sendResponse(null);
+      });
+    return true;
+  }
+
   if (message.action === "getTerms") {
     getTerms()
       .then((data) => sendResponse(data))
@@ -1695,15 +2529,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.action === "runAnalysisForTerm") {
-    const gen = message.analysisGen ?? 0;
-    const term = message.term || null;
-    analysisRunQueue = analysisRunQueue
-      .then(() =>
-        runAnalysis((update) => {
-          chrome.runtime.sendMessage({ ...update, analysisGen: gen });
-        }, term),
-      )
-      .catch((e) => console.error("[BobcatPlus] runAnalysisForTerm:", e));
+    runAnalysis((update) => {
+      chrome.runtime.sendMessage(update);
+    }, message.term || null);
     sendResponse({ started: true });
   }
 
@@ -1774,3 +2602,4 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   return true;
 });
+

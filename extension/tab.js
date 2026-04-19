@@ -4,16 +4,7 @@
 
 function stripHtml(html) {
   if (!html) return null;
-  return html
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&quot;/g, '"')
-    .replace(/&amp;/g, "&")
-    .replace(/&rsquo;/g, "'")
-    .replace(/&#39;/g, "'")
-    .replace(/\s+/g, " ")
-    .trim()
-    .split("Section Description:")[0]
-    .trim();
+  return html.replace(/<[^>]+>/g, " ").replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&rsquo;/g, "'").replace(/&#39;/g, "'").replace(/\s+/g, " ").trim().split("Section Description:")[0].trim();
 }
 
 function compressRegisteredForLLM(events) {
@@ -28,101 +19,51 @@ function compressRegisteredForLLM(events) {
     if (seen.has(key)) continue;
     seen.add(key);
     const dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri"];
-    const startStr =
-      String(start.getHours()).padStart(2, "0") +
-      String(start.getMinutes()).padStart(2, "0");
-    const endStr =
-      String(end.getHours()).padStart(2, "0") +
-      String(end.getMinutes()).padStart(2, "0");
+    const startStr = String(start.getHours()).padStart(2, "0") + String(start.getMinutes()).padStart(2, "0");
+    const endStr = String(end.getHours()).padStart(2, "0") + String(end.getMinutes()).padStart(2, "0");
     const existing = courses.find((c) => c.crn === String(event.crn));
-    if (existing) {
-      if (!existing.days.includes(dayNames[dayIdx]))
-        existing.days.push(dayNames[dayIdx]);
-    } else {
-      courses.push({
-        crn: String(event.crn),
-        course: event.subject + " " + event.courseNumber,
-        title: event.title,
-        days: [dayNames[dayIdx]],
-        start: startStr,
-        end: endStr,
-      });
-    }
+    if (existing) { if (!existing.days.includes(dayNames[dayIdx])) existing.days.push(dayNames[dayIdx]); }
+    else courses.push({ crn: String(event.crn), course: event.subject + " " + event.courseNumber, title: event.title, days: [dayNames[dayIdx]], start: startStr, end: endStr });
   }
   return courses;
 }
 
 function applyPreFilter(compressed, registeredCourses) {
   return {
-    eligible: compressed.eligible
-      .map((course) => {
-        const filteredSections = course.sections
-          .map((section) => {
-            if (section.online || !section.days || !section.start)
-              return { ...section, conflictsWith: [] };
-            const conflicts = [];
-            for (const reg of registeredCourses) {
-              if (!reg.days || !reg.start) continue;
-              const sharedDays = section.days.filter((d) =>
-                reg.days.includes(d),
-              );
-              if (sharedDays.length === 0) continue;
-              const secStart = timeStrToMinutes(section.start),
-                secEnd = timeStrToMinutes(section.end);
-              const regStart = timeStrToMinutes(reg.start),
-                regEnd = timeStrToMinutes(reg.end);
-              if (secStart < regEnd && regStart < secEnd)
-                conflicts.push(reg.crn + " (" + reg.course + ")");
-            }
-            return { ...section, conflictsWith: conflicts };
-          })
-          .filter((s) => s.conflictsWith.length === 0);
-        return { ...course, sections: filteredSections };
-      })
-      .filter((c) => c.sections.length > 0),
+    eligible: compressed.eligible.map((course) => {
+      const filteredSections = course.sections.map((section) => {
+        if (section.online || !section.days || !section.start) return { ...section, conflictsWith: [] };
+        const conflicts = [];
+        for (const reg of registeredCourses) {
+          if (!reg.days || !reg.start) continue;
+          const sharedDays = section.days.filter((d) => reg.days.includes(d));
+          if (sharedDays.length === 0) continue;
+          if (timeStrToMinutes(section.start) < timeStrToMinutes(reg.end) && timeStrToMinutes(reg.start) < timeStrToMinutes(section.end))
+            conflicts.push(reg.crn + " (" + reg.course + ")");
+        }
+        return { ...section, conflictsWith: conflicts };
+      }).filter((s) => s.conflictsWith.length === 0);
+      return { ...course, sections: filteredSections };
+    }).filter((c) => c.sections.length > 0),
   };
 }
 
 function compressForLLM(data) {
   return {
-    eligible: data.eligible
-      .map((course) => {
-        const description = stripHtml(course.sections[0]?.courseDescription);
-        const openSections = course.sections
-          .filter((s) => s.openSection)
-          .map((s) => {
-            const mt = s.meetingsFaculty[0]?.meetingTime;
-            const days = [];
-            if (mt?.monday) days.push("Mon");
-            if (mt?.tuesday) days.push("Tue");
-            if (mt?.wednesday) days.push("Wed");
-            if (mt?.thursday) days.push("Thu");
-            if (mt?.friday) days.push("Fri");
-            return {
-              crn: s.courseReferenceNumber,
-              online: s.instructionalMethod === "INT",
-              days: days.length ? days : null,
-              start: mt?.beginTime || null,
-              end: mt?.endTime || null,
-              seatsAvailable: s.seatsAvailable,
-              instructor:
-                s.faculty[0]?.displayName !== "Faculty, Unassigned"
-                  ? s.faculty[0]?.displayName
-                  : null,
-              credits: s.creditHourLow ?? 3,
-            };
-          });
-        return {
-          course: `${course.subject} ${course.courseNumber}`,
-          title: course.sections[0]?.courseTitle
-            ?.replace(/&amp;/g, "&")
-            ?.replace(/&#39;/g, "'"),
-          requirementLabel: course.label,
-          description,
-          sections: openSections,
-        };
-      })
-      .filter((c) => c.sections.length > 0),
+    eligible: data.eligible.map((course) => {
+      const description = stripHtml(course.sections[0]?.courseDescription);
+      const openSections = course.sections.filter((s) => s.openSection).map((s) => {
+        const mt = s.meetingsFaculty[0]?.meetingTime;
+        const days = [];
+        if (mt?.monday) days.push("Mon");
+        if (mt?.tuesday) days.push("Tue");
+        if (mt?.wednesday) days.push("Wed");
+        if (mt?.thursday) days.push("Thu");
+        if (mt?.friday) days.push("Fri");
+        return { crn: s.courseReferenceNumber, online: s.instructionalMethod === "INT", days: days.length ? days : null, start: mt?.beginTime || null, end: mt?.endTime || null, seatsAvailable: s.seatsAvailable, instructor: s.faculty[0]?.displayName !== "Faculty, Unassigned" ? s.faculty[0]?.displayName : null, credits: s.creditHourLow ?? 3 };
+      });
+      return { course: `${course.subject} ${course.courseNumber}`, title: course.sections[0]?.courseTitle?.replace(/&amp;/g, "&")?.replace(/&#39;/g, "'"), requirementLabel: course.label, description, sections: openSections };
+    }).filter((c) => c.sections.length > 0),
   };
 }
 
@@ -131,71 +72,33 @@ You are an academic schedule planning assistant helping students at Texas State 
 build optimal course schedules for an upcoming semester.
 
 You will receive:
-1. ALREADY LOCKED: courses the student has locked in (registered or manually chosen). These are FIXED —
-   you must never conflict with them, never include them in your output schedules, and only output the NEW courses being added.
-   Treat their time slots as completely blocked.
-2. ELIGIBLE COURSES: courses available to add, each with open sections. Each section may 
-   include a conflictsWith[] field — if it is non-empty, that section has already been 
-   flagged as conflicting with a locked course and must NOT be selected.
+1. ALREADY LOCKED: courses the student has locked in. These are FIXED — never conflict with them, never include them in output, only output NEW courses. Treat their time slots as completely blocked.
+2. ELIGIBLE COURSES: courses available to add, each with open sections. Each section may include a conflictsWith[] field — if non-empty, that section conflicts with a locked course and must NOT be selected.
 3. The student's preferences in natural language.
 
-═══════════════════════════════════════════
-HARD RULES — never violate these
-═══════════════════════════════════════════
-1. No time conflicts. Two sections cannot overlap on the same day. 
-   Times are 24-hour strings (e.g. "1230" = 12:30 PM, "1400" = 2:00 PM).
-2. Only select sections where seatsAvailable > 0, unless the student explicitly says 
-   they are okay with waitlisting.
-3. Never select two courses that satisfy the same requirementLabel unless the student 
-   explicitly asks to double up on a category.
-4. Respect all explicit timing constraints from the student.
-5. Only use sections from the provided eligible list. Do not invent CRNs or courses.
+HARD RULES:
+1. No time conflicts between any two sections on the same day.
+2. Only select sections where seatsAvailable > 0 unless student says otherwise.
+3. Never select two courses satisfying the same requirementLabel unless student asks.
+4. Respect all explicit timing constraints.
+5. Only use sections from the provided eligible list.
 
-═══════════════════════════════════════════
-SOFT PREFERENCES
-═══════════════════════════════════════════
-- Career goals: favor courses most relevant to the student's stated career interests.
-- Day/time preferences: prefer lighter days or specific time ranges if mentioned.
-- Topic interests: favor courses matching stated interests when multiple options satisfy the same requirement.
-- Online vs in-person: default to in-person unless the student prefers online.
-- Unassigned faculty is a mild negative but not a disqualifier.
-
-═══════════════════════════════════════════
-OUTPUT FORMAT
-═══════════════════════════════════════════
-Always respond with valid JSON only — no markdown, no preamble.
-
+OUTPUT FORMAT — valid JSON only, no markdown:
 {
   "schedules": [
     {
-      "name": "Schedule A — <short evocative label>",
+      "name": "Schedule A — <label>",
       "rationale": "<2-4 sentences>",
       "totalCredits": 12,
       "courses": [
-        {
-          "course": "SOCI 3363",
-          "title": "MEDICAL SOCI",
-          "crn": "19272",
-          "days": ["Mon", "Wed"],
-          "start": "1230",
-          "end": "1350",
-          "online": false,
-          "requirementSatisfied": "Sociology Requirement",
-          "instructor": "Zhang, Yan"
-        }
+        { "course": "SOCI 3363", "title": "MEDICAL SOCI", "crn": "19272", "days": ["Mon","Wed"], "start": "1230", "end": "1350", "online": false, "requirementSatisfied": "Sociology Requirement", "instructor": "Zhang, Yan" }
       ]
     }
   ],
   "followUpQuestion": "<short friendly question>"
 }
 
-Generate exactly 3 meaningfully distinct schedules.
-
-═══════════════════════════════════════════
-ITERATION & LOCKING
-═══════════════════════════════════════════
-If the student's message includes locked courses, those exact CRNs must appear in all 3 schedules unchanged.
-Always regenerate all 3 schedules on each turn.
+Generate exactly 3 meaningfully distinct schedules. Always regenerate all 3 on each turn.
 `.trim();
 
 // ============================================================
@@ -203,131 +106,74 @@ Always regenerate all 3 schedules on each turn.
 // ============================================================
 
 const $ = (id) => document.getElementById(id);
-
-function sendToBackground(message) {
-  return new Promise((resolve) => chrome.runtime.sendMessage(message, resolve));
-}
+function sendToBackground(message) { return new Promise((resolve) => chrome.runtime.sendMessage(message, resolve)); }
 
 let currentStudent = null;
 let currentTerm = null;
 let analysisResults = null;
-/** Increments each eligible-course analysis run; must match background message `analysisGen`. */
 let eligibleAnalysisSeq = 0;
 let savedSchedules = [];
 let conversationHistory = [];
 let cachedRawData = null;
-let cachedRegisteredCourses = []; // LLM conflict avoidance
+let cachedRegisteredCourses = [];
 let cachedRegisteredTerm = null;
-
-// Mi's auth/fetch state
 let registeredFetchCompleted = false;
 let registeredFetchOk = false;
-
-// Max's plan state
 let bannerPlans = [];
 let registeredScheduleCache = {};
 
-/** Persist last successful Banner registration payload so a new tab can render before cookies warm up */
 const REG_EVENTS_STORAGE_KEY = "bobcatRegEventsCache";
-
 function persistRegistrationEvents(term, events) {
-  if (!term || !Array.isArray(events) || events.length === 0) return;
-  try {
-    chrome.storage.local.set({
-      [REG_EVENTS_STORAGE_KEY]: {
-        term: String(term),
-        events,
-        savedAt: Date.now(),
-      },
-    });
-  } catch (_) {}
+  if (!term || !Array.isArray(events) || !events.length) return;
+  try { chrome.storage.local.set({ [REG_EVENTS_STORAGE_KEY]: { term: String(term), events, savedAt: Date.now() } }); } catch (_) {}
 }
-
 function loadCachedRegistrationEvents(term) {
   return new Promise((resolve) => {
     chrome.storage.local.get(REG_EVENTS_STORAGE_KEY, (obj) => {
       const c = obj[REG_EVENTS_STORAGE_KEY];
-      if (
-        c &&
-        String(c.term) === String(term) &&
-        Array.isArray(c.events) &&
-        c.events.length
-      ) {
-        resolve(c.events);
-        return;
-      }
+      if (c && String(c.term) === String(term) && Array.isArray(c.events) && c.events.length) { resolve(c.events); return; }
       resolve(null);
     });
   });
 }
 
-// Eligible courses (shared between Build and AI)
 let eligibleCourses = [];
 let expandedCourseKey = null;
 let selectedSectionByCourse = {};
 
 // ── UNIFIED WORKING SCHEDULE ──────────────────────────────
-// workingCourses: array of course entries on the calendar right now
-// Each entry: { crn, subject, courseNumber, title, days, beginTime, endTime, source, online }
-// source: "registered" | "banner" | "saved" | "manual" | "ai"
 let workingCourses = [];
-
-// lockedCrns: Set of CRNs the user has locked. Registered courses default to locked; banner plans start unlocked.
 let lockedCrns = new Set();
 
-// Invalidate in-flight async schedule loads (e.g. TXST plan fetch) when user picks another schedule
-let scheduleViewGeneration = 0;
-function bumpScheduleViewGeneration() {
-  scheduleViewGeneration += 1;
-  return scheduleViewGeneration;
-}
-
-// Drop stale registration fetches when term changes or Import runs again mid-flight
 let scheduleFetchGeneration = 0;
-function bumpScheduleFetchGeneration() {
-  scheduleFetchGeneration += 1;
-  return scheduleFetchGeneration;
-}
+function bumpScheduleFetchGeneration() { return ++scheduleFetchGeneration; }
+let scheduleViewGeneration = 0;
+function bumpScheduleViewGeneration() { return ++scheduleViewGeneration; }
 
 // ── UI MODE ───────────────────────────────────────────────
-// "build" or "ai"
 let panelMode = "build";
-
-// Schedules section collapsed state
 let schedulesCollapsed = false;
-
-// Which schedule is currently selected in the list
-let activeScheduleKey = "registered"; // "registered" | "new" | "saved:N" | "banner:N"
-
-// New Plan row — survives renderSavedList(); after first name edit blur, only double-click reopens editor
+let activeScheduleKey = "registered";
 let newPlanDisplayName = "";
 let newPlanSingleClickOpensEdit = true;
 let newPlanClickTimer = null;
 
-// Calendar constants — declared here so buildEmptyCalendar() can use them at any call time
+// Calendar constants
 const START_HOUR = 7;
 const END_HOUR = 22;
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+const PX_PER_HOUR = 52;
+
+// ── MODAL METADATA ────────────────────────────────────────
+const calendarCourseMetaByCrn = new Map();
+function clearCalendarCourseMeta() { calendarCourseMetaByCrn.clear(); }
+function registerCourseMeta(crn, meta) { if (crn && meta) calendarCourseMetaByCrn.set(String(crn), meta); }
 
 // ============================================================
-// DEBUG LOGGER (fails silently — strip before production)
+// DEBUG LOGGER
 // ============================================================
 function dbgLog(location, message, data, hypothesisId) {
-  fetch("http://127.0.0.1:7750/ingest/853901e6-d4c8-4b6b-b2a7-9b1a93c88eb5", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Debug-Session-Id": "782a56",
-    },
-    body: JSON.stringify({
-      sessionId: "782a56",
-      location,
-      message,
-      data: data || {},
-      timestamp: Date.now(),
-      hypothesisId,
-    }),
-  }).catch(() => {});
+  fetch("http://127.0.0.1:7750/ingest/853901e6-d4c8-4b6b-b2a7-9b1a93c88eb5", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "782a56" }, body: JSON.stringify({ sessionId: "782a56", location, message, data: data || {}, timestamp: Date.now(), hypothesisId }) }).catch(() => {});
 }
 
 // ============================================================
@@ -336,15 +182,7 @@ function dbgLog(location, message, data, hypothesisId) {
 
 (async () => {
   const reloadMark = sessionStorage.getItem("bobcat_dbg_post_login_reload");
-  if (reloadMark) {
-    sessionStorage.removeItem("bobcat_dbg_post_login_reload");
-    dbgLog(
-      "tab.js:init",
-      "tab loaded after post-login location.reload",
-      { reloadMark },
-      "H2-verify",
-    );
-  }
+  if (reloadMark) { sessionStorage.removeItem("bobcat_dbg_post_login_reload"); dbgLog("tab.js:init", "tab loaded after post-login location.reload", { reloadMark }, "H2-verify"); }
 
   chrome.runtime.sendMessage({ action: "getStudentInfo" }, (student) => {
     if (student) applyStudentInfoToUI(student);
@@ -357,47 +195,27 @@ function dbgLog(location, message, data, hypothesisId) {
   });
 
   chrome.runtime.sendMessage({ action: "getTerms" }, (terms) => {
-    if (!terms || terms.length === 0) {
-      const sb = $("statusBar");
-      if (sb) sb.textContent = "Could not load terms. Reload this page or try again.";
-      return;
-    }
+    if (!terms || !terms.length) { const sb = $("statusBar"); if (sb) sb.textContent = "Could not load terms. Reload and try again."; return; }
     const select = $("termSelect");
     const now = new Date();
     let currentIdx = 0;
     for (let i = 0; i < terms.length; i++) {
-      const dateMatch = terms[i].description.match(/(\d{2}-[A-Z]{3}-\d{4})/);
-      if (dateMatch) {
-        const startDate = new Date(dateMatch[1]);
-        if (startDate <= now) {
-          currentIdx = i;
-          break;
-        }
-      }
+      const m = terms[i].description.match(/(\d{2}-[A-Z]{3}-\d{4})/);
+      if (m && new Date(m[1]) <= now) { currentIdx = i; break; }
     }
     terms.forEach((t, i) => {
       const opt = document.createElement("option");
-      opt.value = t.code;
-      opt.textContent = t.description;
+      opt.value = t.code; opt.textContent = t.description;
       if (i === currentIdx) opt.selected = true;
       select.appendChild(opt);
     });
     currentTerm = terms[currentIdx].code;
     buildEmptyCalendar();
     setPanelMode("build");
-
     (async () => {
       const ok = await checkAuth();
-      if (ok) {
-        await loadSchedule(currentTerm);
-        await loadBannerPlans(currentTerm);
-        // Only start eligible course fetch AFTER schedule is loaded and session is warm
-        autoLoadEligibleCourses();
-      } else {
-        $("statusBar").textContent =
-          "Use Import Schedule to sign in and load your registration.";
-        await loadBannerPlans(currentTerm);
-      }
+      if (ok) { await loadSchedule(currentTerm); await loadBannerPlans(currentTerm); autoLoadEligibleCourses(); }
+      else { $("statusBar").textContent = "Use Import Schedule to sign in and load your registration."; await loadBannerPlans(currentTerm); }
     })();
   });
 })();
@@ -408,35 +226,16 @@ function dbgLog(location, message, data, hypothesisId) {
 
 $("termSelect").addEventListener("change", async (e) => {
   currentTerm = e.target.value;
-  analysisResults = null;
-  cachedRawData = null;
-  cachedRegisteredCourses = [];
-  cachedRegisteredTerm = null;
-  conversationHistory = [];
-  bannerPlans = [];
-  registeredScheduleCache = {};
-  eligibleCourses = [];
-  expandedCourseKey = null;
-  selectedSectionByCourse = {};
-  workingCourses = [];
-  lockedCrns = new Set();
-  newPlanDisplayName = "";
-  newPlanSingleClickOpensEdit = true;
-  if (newPlanClickTimer) {
-    clearTimeout(newPlanClickTimer);
-    newPlanClickTimer = null;
-  }
+  analysisResults = null; cachedRawData = null; cachedRegisteredCourses = []; cachedRegisteredTerm = null;
+  conversationHistory = []; bannerPlans = []; registeredScheduleCache = {};
+  eligibleCourses = []; expandedCourseKey = null; selectedSectionByCourse = {};
+  workingCourses = []; lockedCrns = new Set();
+  newPlanDisplayName = ""; newPlanSingleClickOpensEdit = true;
+  if (newPlanClickTimer) { clearTimeout(newPlanClickTimer); newPlanClickTimer = null; }
   buildEmptyCalendar();
   setPanelMode("build");
-  if (await checkAuth()) {
-    await loadSchedule(currentTerm);
-    await loadBannerPlans(currentTerm);
-    autoLoadEligibleCourses();
-  } else {
-    $("statusBar").textContent =
-      "Use Import Schedule to sign in and load your registration.";
-    await loadBannerPlans(currentTerm);
-  }
+  if (await checkAuth()) { await loadSchedule(currentTerm); await loadBannerPlans(currentTerm); autoLoadEligibleCourses(); }
+  else { $("statusBar").textContent = "Use Import Schedule to sign in and load your registration."; await loadBannerPlans(currentTerm); }
 });
 
 // ============================================================
@@ -445,47 +244,34 @@ $("termSelect").addEventListener("change", async (e) => {
 
 function setPanelMode(mode) {
   panelMode = mode;
-  const buildTab = $("tabBuild");
-  const aiTab = $("tabAI");
-  const buildPanel = $("buildPanel");
-  const aiPanel = $("aiPanel");
-
+  const buildTab = $("tabBuild"), aiTab = $("tabAI");
+  const buildPanel = $("buildPanel"), aiPanel = $("aiPanel");
   if (buildTab) buildTab.classList.toggle("active", mode === "build");
   if (aiTab) aiTab.classList.toggle("active", mode === "ai");
   if (buildPanel) buildPanel.style.display = mode === "build" ? "flex" : "none";
   if (aiPanel) aiPanel.style.display = mode === "ai" ? "flex" : "none";
-
   renderEligibleList();
   renderSavedList();
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-  const buildTab = $("tabBuild");
-  const aiTab = $("tabAI");
+  const buildTab = $("tabBuild"), aiTab = $("tabAI");
   if (buildTab) buildTab.addEventListener("click", () => setPanelMode("build"));
   if (aiTab) aiTab.addEventListener("click", () => setPanelMode("ai"));
 
-  // Schedules collapsible
   const schedulesToggle = $("schedulesToggle");
   if (schedulesToggle) {
     schedulesToggle.addEventListener("click", () => {
       schedulesCollapsed = !schedulesCollapsed;
-      const chevron = $("schedulesChevron");
       const body = $("schedulesBody");
-      if (chevron) chevron.textContent = schedulesCollapsed ? "›" : "›";
       if (body) body.style.display = schedulesCollapsed ? "none" : "block";
-      if (schedulesToggle)
-        schedulesToggle.classList.toggle("collapsed", schedulesCollapsed);
+      schedulesToggle.classList.toggle("collapsed", schedulesCollapsed);
     });
   }
 });
 
 async function autoLoadEligibleCourses() {
-  if (analysisResults && (analysisResults.eligible || []).length > 0) {
-    eligibleCourses = analysisResults.eligible;
-    renderEligibleList();
-    return;
-  }
+  if (analysisResults && (analysisResults.eligible || []).length > 0) { eligibleCourses = analysisResults.eligible; renderEligibleList(); return; }
   const statusEl = $("eligibleStatus");
   if (statusEl) statusEl.textContent = "Loading your eligible courses…";
   analysisResults = await runAnalysisAndWait();
@@ -496,93 +282,39 @@ async function autoLoadEligibleCourses() {
 }
 
 // ============================================================
-// AUTH + IMPORT (Mi)
+// AUTH + IMPORT
 // ============================================================
 
 async function checkAuth() {
   try {
     const [dwRes, regRes] = await Promise.all([
-      fetch(
-        "https://dw-prod.ec.txstate.edu/responsiveDashboard/api/students/myself",
-        { credentials: "include" },
-      ),
-      fetch(
-        "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classSearch/getTerms?searchTerm=&offset=1&max=1",
-        { credentials: "include" },
-      ),
+      fetch("https://dw-prod.ec.txstate.edu/responsiveDashboard/api/students/myself", { credentials: "include" }),
+      fetch("https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classSearch/getTerms?searchTerm=&offset=1&max=1", { credentials: "include" }),
     ]);
     return dwRes.ok && regRes.ok;
-  } catch (e) {
-    return false;
-  }
+  } catch (e) { return false; }
 }
 
-/** Only one login listener at a time — repeated Import clicks must not stack handlers. */
 let importLoginListener = null;
-
-/** Shared post–login-popup flow for Import (session missing or registration empty). */
 function attachImportLoginListener(importBtn, importSvg) {
-  if (importLoginListener) {
-    chrome.runtime.onMessage.removeListener(importLoginListener);
-    importLoginListener = null;
-  }
+  if (importLoginListener) { chrome.runtime.onMessage.removeListener(importLoginListener); importLoginListener = null; }
   importLoginListener = (msg) => {
     if (msg.type === "loginSuccess") {
-      chrome.runtime.onMessage.removeListener(importLoginListener);
-      importLoginListener = null;
+      chrome.runtime.onMessage.removeListener(importLoginListener); importLoginListener = null;
       addMessage("system", "Login successful! Loading your schedule next…");
       (async () => {
-        dbgLog(
-          "tab.js:loginSuccess",
-          "post-login async started",
-          { currentTerm },
-          "H2",
-        );
-        importBtn.textContent = "Importing...";
-        importBtn.classList.add("loading");
+        importBtn.textContent = "Importing..."; importBtn.classList.add("loading");
         const authed2 = await checkAuth();
-        if (!authed2) {
-          addMessage(
-            "system",
-            "TXST session not ready yet. Wait a few seconds and click Import Schedule again.",
-          );
-          importBtn.disabled = false;
-          importBtn.classList.remove("loading");
-          importBtn.innerHTML = importSvg;
-          return;
-        }
+        if (!authed2) { addMessage("system", "TXST session not ready yet. Try Import Schedule again."); importBtn.disabled = false; importBtn.classList.remove("loading"); importBtn.innerHTML = importSvg; return; }
         await waitWithChatCountdown(1);
-        analysisResults = null;
-        cachedRawData = null;
-        cachedRegisteredCourses = [];
-        cachedRegisteredTerm = null;
-        conversationHistory = [];
+        analysisResults = null; cachedRawData = null; cachedRegisteredCourses = []; cachedRegisteredTerm = null; conversationHistory = [];
         $("statusBar").textContent = "Importing schedule...";
         await loadSchedule(currentTerm);
-        sessionStorage.setItem(
-          "bobcat_dbg_post_login_reload",
-          String(Date.now()),
-        );
+        sessionStorage.setItem("bobcat_dbg_post_login_reload", String(Date.now()));
         location.reload();
-      })().catch((err) => {
-        console.error("[BobcatPlus] post-login import:", err);
-        addMessage(
-          "system",
-          "Could not finish loading your schedule. Use Refresh in the chat or Import Schedule again.",
-        );
-        importBtn.disabled = false;
-        importBtn.classList.remove("loading");
-        importBtn.innerHTML = importSvg;
-      });
+      })().catch((err) => { console.error("[BobcatPlus] post-login import:", err); addMessage("system", "Could not finish loading. Try Import Schedule again."); importBtn.disabled = false; importBtn.classList.remove("loading"); importBtn.innerHTML = importSvg; });
     }
-    if (msg.type === "loginCancelled") {
-      chrome.runtime.onMessage.removeListener(importLoginListener);
-      importLoginListener = null;
-      addMessage("system", "Login cancelled. Click Import to try again.");
-      importBtn.disabled = false;
-      importBtn.classList.remove("loading");
-      importBtn.innerHTML = importSvg;
-    }
+    if (msg.type === "loginCancelled") { chrome.runtime.onMessage.removeListener(importLoginListener); importLoginListener = null; addMessage("system", "Login cancelled. Click Import to try again."); importBtn.disabled = false; importBtn.classList.remove("loading"); importBtn.innerHTML = importSvg; }
   };
   chrome.runtime.onMessage.addListener(importLoginListener);
 }
@@ -590,108 +322,33 @@ function attachImportLoginListener(importBtn, importSvg) {
 const importBtn = document.getElementById("importBtn");
 if (importBtn) {
   importBtn.addEventListener("click", async () => {
-    importBtn.disabled = true;
-    importBtn.classList.add("loading");
-    importBtn.textContent = "Checking session...";
+    importBtn.disabled = true; importBtn.classList.add("loading"); importBtn.textContent = "Checking session...";
     const authed = await checkAuth();
     const importSvg = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Import Schedule`;
-
-    if (!authed) {
-      importBtn.textContent = "Waiting for login...";
-      addMessage(
-        "system",
-        "Opening TXST login — sign in and the import will start automatically.",
-      );
-      chrome.runtime.sendMessage({ action: "openLoginPopup" });
-      attachImportLoginListener(importBtn, importSvg);
-      return;
-    }
-
-    importBtn.textContent = "Importing...";
-    $("statusBar").textContent = "Importing schedule...";
-    analysisResults = null;
-    cachedRawData = null;
-    cachedRegisteredCourses = [];
-    cachedRegisteredTerm = null;
-    conversationHistory = [];
-    let resetImportBtn = true;
+    if (!authed) { importBtn.textContent = "Waiting for login..."; addMessage("system", "Opening TXST login — sign in and the import will start automatically."); chrome.runtime.sendMessage({ action: "openLoginPopup" }); attachImportLoginListener(importBtn, importSvg); return; }
+    importBtn.textContent = "Importing..."; $("statusBar").textContent = "Importing schedule...";
+    analysisResults = null; cachedRawData = null; cachedRegisteredCourses = []; cachedRegisteredTerm = null; conversationHistory = [];
+    let resetBtn = true;
     try {
-      const scheduleResult = await loadSchedule(currentTerm);
-      // Session can look "ok" while registration returns empty — offer login to refresh cookies
-      if (scheduleResult.stale) {
-        return;
-      }
-      if (
-        !scheduleResult.hadRegistrationRows &&
-        !scheduleResult.fromDiskCache
-      ) {
-        // #region agent log
-        fetch("http://127.0.0.1:7590/ingest/2a571ae1-604a-4281-a7bb-8aa23a705774", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Debug-Session-Id": "33925b",
-          },
-          body: JSON.stringify({
-            sessionId: "33925b",
-            location: "tab.js:importBtn",
-            message: "no registration rows — open login",
-            data: {
-              fetchOk: scheduleResult.fetchOk,
-              fromDiskCache: scheduleResult.fromDiskCache,
-            },
-            timestamp: Date.now(),
-            hypothesisId: "H-import-empty",
-          }),
-        }).catch(() => {});
-        // #endregion
-        resetImportBtn = false;
-        importBtn.textContent = "Waiting for login...";
-        addMessage(
-          "system",
-          "Opening TXST login — sign in to load your registration.",
-        );
-        chrome.runtime.sendMessage({ action: "openLoginPopup" });
-        attachImportLoginListener(importBtn, importSvg);
-        return;
-      }
-    } finally {
-      if (resetImportBtn) {
-        importBtn.disabled = false;
-        importBtn.classList.remove("loading");
-        importBtn.innerHTML = importSvg;
-      }
-    }
+      const result = await loadSchedule(currentTerm);
+      if (result.stale) return;
+      if (!result.hadRegistrationRows && !result.fromDiskCache) { resetBtn = false; importBtn.textContent = "Waiting for login..."; addMessage("system", "Opening TXST login — sign in to load your registration."); chrome.runtime.sendMessage({ action: "openLoginPopup" }); attachImportLoginListener(importBtn, importSvg); return; }
+    } finally { if (resetBtn) { importBtn.disabled = false; importBtn.classList.remove("loading"); importBtn.innerHTML = importSvg; } }
   });
 }
 
 // ============================================================
-// SAML / getCurrentSchedule (Mi — page context, DOMParser)
+// SAML / getCurrentSchedule
 // ============================================================
 
-function waitAnimationFrames(n) {
-  let p = Promise.resolve();
-  for (let i = 0; i < n; i++)
-    p = p.then(() => new Promise((r) => requestAnimationFrame(r)));
-  return p;
-}
-
-function registrationResponseLooksLikeJson(text) {
-  const t = text.trim();
-  return t.startsWith("[") || t.startsWith("{");
-}
+function waitAnimationFrames(n) { let p = Promise.resolve(); for (let i = 0; i < n; i++) p = p.then(() => new Promise((r) => requestAnimationFrame(r))); return p; }
+function registrationResponseLooksLikeJson(text) { const t = text.trim(); return t.startsWith("[") || t.startsWith("{"); }
 
 function pickSamlPostForm(doc) {
   const forms = [...doc.querySelectorAll("form")];
-  if (forms.length === 0) return null;
-  const hasRelay = (f) =>
-    f.querySelector(
-      'input[name="SAMLResponse"],input[name="SAMLRequest"],input[name="RelayState"]',
-    );
-  const withSaml = forms.find(hasRelay);
-  if (withSaml) return withSaml;
-  const outsideNoscript = forms.find((f) => !f.closest("noscript"));
-  return outsideNoscript || forms[0];
+  if (!forms.length) return null;
+  const hasRelay = (f) => f.querySelector('input[name="SAMLResponse"],input[name="SAMLRequest"],input[name="RelayState"]');
+  return forms.find(hasRelay) || forms.find((f) => !f.closest("noscript")) || forms[0];
 }
 
 async function submitFirstFormFromHtml(htmlText, baseHref) {
@@ -700,141 +357,63 @@ async function submitFirstFormFromHtml(htmlText, baseHref) {
     const form = pickSamlPostForm(doc);
     if (!form) return null;
     const rawAction = form.getAttribute("action");
-    if (rawAction && rawAction.trim().toLowerCase().startsWith("javascript:"))
-      return null;
-    const url =
-      !rawAction || rawAction.trim() === ""
-        ? new URL(baseHref)
-        : new URL(rawAction, baseHref);
+    if (rawAction && rawAction.trim().toLowerCase().startsWith("javascript:")) return null;
+    const url = (!rawAction || rawAction.trim() === "") ? new URL(baseHref) : new URL(rawAction, baseHref);
     const method = (form.getAttribute("method") || "GET").toUpperCase();
     const params = new URLSearchParams();
-    form.querySelectorAll("input[name]").forEach((input) => {
-      const n = input.getAttribute("name");
-      if (n) params.append(n, input.value);
-    });
-    form.querySelectorAll("select[name]").forEach((sel) => {
-      const n = sel.getAttribute("name");
-      if (n) params.append(n, sel.value);
-    });
-    form.querySelectorAll("textarea[name]").forEach((ta) => {
-      const n = ta.getAttribute("name");
-      if (n) params.append(n, ta.value);
-    });
+    form.querySelectorAll("input[name]").forEach((i) => { const n = i.getAttribute("name"); if (n) params.append(n, i.value); });
+    form.querySelectorAll("select[name]").forEach((s) => { const n = s.getAttribute("name"); if (n) params.append(n, s.value); });
     const init = { credentials: "include", redirect: "follow" };
-    if (method === "GET") {
-      url.search = params.toString();
-      const r = await fetch(url.href, init);
-      return await r.text();
-    }
-    const r = await fetch(url.href, {
-      ...init,
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: params.toString(),
-    });
-    return await r.text();
-  } catch (e) {
-    console.log("[BobcatPlus] submitFirstFormFromHtml:", e);
-    return null;
-  }
+    if (method === "GET") { url.search = params.toString(); return await (await fetch(url.href, init)).text(); }
+    return await (await fetch(url.href, { ...init, method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: params.toString() })).text();
+  } catch (e) { return null; }
 }
 
 async function resolveRegistrationHtmlToJson(initialText, baseHref) {
-  let text = initialText,
-    samlHops = 0;
-  while (!registrationResponseLooksLikeJson(text) && samlHops < 8) {
-    const next = await submitFirstFormFromHtml(text, baseHref);
-    if (next === null) break;
-    text = next;
-    samlHops++;
-  }
+  let text = initialText, samlHops = 0;
+  while (!registrationResponseLooksLikeJson(text) && samlHops < 8) { const next = await submitFirstFormFromHtml(text, baseHref); if (!next) break; text = next; samlHops++; }
   return { text, samlHops };
 }
 
 async function getCurrentSchedule(term) {
   try {
-    await fetch(
-      "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/term/search?mode=registration",
-      {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ term }).toString(),
-      },
-    );
-    await fetch(
-      "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/classRegistration",
-      { credentials: "include" },
-    );
-    const response = await fetch(
-      "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/getRegistrationEvents?termFilter=",
-      { credentials: "include" },
-    );
+    await fetch("https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/term/search?mode=registration", { method: "POST", credentials: "include", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ term }).toString() });
+    await fetch("https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/classRegistration", { credentials: "include" });
+    const response = await fetch("https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/getRegistrationEvents?termFilter=", { credentials: "include" });
     let text = await response.text();
-    const eventsBase =
-      "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/getRegistrationEvents";
+    const eventsBase = "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/getRegistrationEvents";
     const resolved = await resolveRegistrationHtmlToJson(text, eventsBase);
     text = resolved.text;
-    if (!registrationResponseLooksLikeJson(text)) {
-      console.log(
-        "[BobcatPlus] getRegistrationEvents returned non-JSON:",
-        text.slice(0, 100),
-      );
-      return null;
-    }
+    if (!registrationResponseLooksLikeJson(text)) return null;
     return JSON.parse(text);
-  } catch (e) {
-    console.log("[BobcatPlus] getCurrentSchedule error:", e);
-    return null;
-  }
+  } catch (e) { return null; }
 }
 
 // ============================================================
-// LOAD SCHEDULE — populates workingCourses from registered events
+// LOAD SCHEDULE
 // ============================================================
 
-/** One row per CRN from Banner registration events (same shape as loadSchedule). */
 function buildRegisteredCoursesFromEvents(data) {
-  const seen = new Set();
-  const registered = [];
-  const locks = new Set();
-  if (!data || !data.length) return { registered, locks: locks };
+  const seen = new Set(), registered = [], locks = new Set();
+  if (!data || !data.length) return { registered, locks };
   for (const event of data) {
     if (seen.has(event.crn)) continue;
     seen.add(event.crn);
-    const start = new Date(event.start);
-    const end = new Date(event.end);
+    const start = new Date(event.start), end = new Date(event.end);
     const dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri"];
     const days = [];
     for (const ev2 of data) {
       if (String(ev2.crn) !== String(event.crn)) continue;
       const d = new Date(ev2.start).getDay() - 1;
-      if (d >= 0 && d <= 4 && !days.includes(dayNames[d]))
-        days.push(dayNames[d]);
+      if (d >= 0 && d <= 4 && !days.includes(dayNames[d])) days.push(dayNames[d]);
     }
-    const bh = start.getHours(),
-      bm = start.getMinutes();
-    const eh = end.getHours(),
-      em = end.getMinutes();
-    registered.push({
-      crn: String(event.crn),
-      subject: event.subject,
-      courseNumber: event.courseNumber,
-      title: event.title,
-      days,
-      beginTime:
-        String(bh).padStart(2, "0") + ":" + String(bm).padStart(2, "0"),
-      endTime:
-        String(eh).padStart(2, "0") + ":" + String(em).padStart(2, "0"),
-      source: "registered",
-      online: false,
-    });
+    const bh = start.getHours(), bm = start.getMinutes();
+    const eh = end.getHours(), em = end.getMinutes();
+    registered.push({ crn: String(event.crn), subject: event.subject, courseNumber: event.courseNumber, title: event.title, days, beginTime: String(bh).padStart(2,"0") + ":" + String(bm).padStart(2,"0"), endTime: String(eh).padStart(2,"0") + ":" + String(em).padStart(2,"0"), source: "registered", online: false });
     locks.add(String(event.crn));
   }
   return { registered, locks };
 }
-
-// viewRegistered listener wired in DOMContentLoaded to avoid null ref at parse time
 
 async function loadSchedule(term) {
   const fetchGen = bumpScheduleFetchGeneration();
@@ -843,106 +422,50 @@ async function loadSchedule(term) {
 
   let fromDiskCache = false;
   let data = await getCurrentSchedule(term);
-  if (data === null) {
-    for (let i = 0; i < 16; i++) {
-      await waitAnimationFrames(2);
-      data = await getCurrentSchedule(term);
-      if (data !== null) break;
-    }
-  }
-  if (data === null) {
-    const cached = await loadCachedRegistrationEvents(term);
-    if (cached) {
-      data = cached;
-      fromDiskCache = true;
-    }
-  }
+  if (data === null) { for (let i = 0; i < 16; i++) { await waitAnimationFrames(2); data = await getCurrentSchedule(term); if (data !== null) break; } }
+  if (data === null) { const cached = await loadCachedRegistrationEvents(term); if (cached) { data = cached; fromDiskCache = true; } }
 
-  if (fetchGen !== scheduleFetchGeneration) {
-    return {
-      stale: true,
-      hadRegistrationRows: false,
-      fromDiskCache: false,
-      fetchOk: false,
-    };
-  }
+  if (fetchGen !== scheduleFetchGeneration) return { stale: true, hadRegistrationRows: false, fromDiskCache: false, fetchOk: false };
 
   registeredFetchOk = data !== null;
   registeredFetchCompleted = true;
-  dbgLog(
-    "tab.js:loadSchedule",
-    "fetch settled",
-    {
-      term,
-      registeredFetchOk,
-      dataNull: data === null,
-      dataLen: Array.isArray(data) ? data.length : -1,
-      fromDiskCache,
-    },
-    "H4",
-  );
+  dbgLog("tab.js:loadSchedule", "fetch settled", { term, registeredFetchOk, dataNull: data === null, dataLen: Array.isArray(data) ? data.length : -1, fromDiskCache }, "H4");
 
   if (data && data.length > 0) {
     removeExistingScheduleRefreshPrompts();
     registeredScheduleCache[term] = data;
     cachedRegisteredCourses = compressRegisteredForLLM(data);
     cachedRegisteredTerm = term;
-
     const { registered, locks } = buildRegisteredCoursesFromEvents(data);
     lockedCrns = locks;
+    workingCourses = [...registered, ...workingCourses.filter((c) => c.source !== "registered")];
 
-    // Preserve any manual/AI courses added since last load
-    workingCourses = [
-      ...registered,
-      ...workingCourses.filter((c) => c.source !== "registered"),
-    ];
+    // Register modal metadata for registered courses
+    const mergedByCrn = groupRegistrationEventsByCrn(data);
+    mergedByCrn.forEach((mergedEv, crn) => {
+      const meta = extractMetaFromRegistrationEvent(mergedEv);
+      // meetingTimeDisplay filled on block render
+      registerCourseMeta(crn, meta);
+    });
 
     renderCalendarFromWorkingCourses();
     updateWeekHours(data);
     updateOverviewFromEvents(data);
     const unique = new Set(data.map((e) => e.crn));
-    if (!fromDiskCache) {
-      persistRegistrationEvents(term, data);
-    }
-    const sb = $("statusBar");
-    if (sb) {
-      sb.textContent = fromDiskCache
-        ? unique.size +
-          " registered courses (saved copy — use Import Schedule to refresh)"
-        : unique.size + " registered courses";
-    }
+    if (!fromDiskCache) persistRegistrationEvents(term, data);
+    $("statusBar").textContent = fromDiskCache ? unique.size + " registered courses (saved copy — use Import Schedule to refresh)" : unique.size + " registered courses";
     updateSaveBtn();
-    return {
-      stale: false,
-      hadRegistrationRows: true,
-      fromDiskCache,
-      fetchOk: true,
-    };
+    return { stale: false, hadRegistrationRows: true, fromDiskCache, fetchOk: true };
   } else if (data === null) {
-    cachedRegisteredCourses = [];
-    cachedRegisteredTerm = term;
-    buildEmptyCalendar();
-    $("statusBar").textContent =
-      "Could not reach registration data. Try Import Schedule again.";
+    cachedRegisteredCourses = []; cachedRegisteredTerm = term;
+    buildEmptyCalendar(); $("statusBar").textContent = "Could not reach registration data. Try Import Schedule again.";
     addScheduleRefreshPrompt();
-    return {
-      stale: false,
-      hadRegistrationRows: false,
-      fromDiskCache,
-      fetchOk: false,
-    };
+    return { stale: false, hadRegistrationRows: false, fromDiskCache, fetchOk: false };
   } else {
     removeExistingScheduleRefreshPrompts();
-    cachedRegisteredCourses = [];
-    cachedRegisteredTerm = term;
-    buildEmptyCalendar();
-    $("statusBar").textContent = "No registered courses for this term";
-    return {
-      stale: false,
-      hadRegistrationRows: false,
-      fromDiskCache: false,
-      fetchOk: true,
-    };
+    cachedRegisteredCourses = []; cachedRegisteredTerm = term;
+    buildEmptyCalendar(); $("statusBar").textContent = "No registered courses for this term";
+    return { stale: false, hadRegistrationRows: false, fromDiskCache: false, fetchOk: true };
   }
 }
 
@@ -968,187 +491,97 @@ function removeFromWorkingSchedule(crn) {
 
 function toggleLock(crn) {
   const k = String(crn);
-  if (lockedCrns.has(k)) {
-    lockedCrns.delete(k);
-  } else {
-    lockedCrns.add(k);
-  }
+  if (lockedCrns.has(k)) lockedCrns.delete(k); else lockedCrns.add(k);
   renderCalendarFromWorkingCourses();
 }
 
 function updateSaveBtn() {
   const saveBtn = $("saveTxstBtn");
   if (!saveBtn) return;
-  const hasNonRegistered = workingCourses.some(
-    (c) => c.source !== "registered",
-  );
+  const hasNonRegistered = workingCourses.some((c) => c.source !== "registered");
   saveBtn.classList.toggle("txst-save-btn--dim", !hasNonRegistered);
   saveBtn.disabled = !hasNonRegistered;
 }
 
 function activateNewPlanRow() {
-  // Already viewing New Plan — keep draft; avoid clearing on accidental re-click
-  if (activeScheduleKey === "new") {
-    // #region agent log
-    fetch("http://127.0.0.1:7590/ingest/2a571ae1-604a-4281-a7bb-8aa23a705774", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "33925b",
-      },
-      body: JSON.stringify({
-        sessionId: "33925b",
-        location: "tab.js:activateNewPlanRow",
-        message: "skip clear — already on New Plan",
-        data: { wcLen: workingCourses.length },
-        timestamp: Date.now(),
-        hypothesisId: "H1-reselect-new",
-      }),
-    }).catch(() => {});
-    // #endregion
-    return;
-  }
+  if (activeScheduleKey === "new") return;
   bumpScheduleViewGeneration();
   activeScheduleKey = "new";
-  workingCourses = [];
-  lockedCrns = new Set();
-  renderCalendarFromWorkingCourses();
-  updateSaveBtn();
-  renderSavedList();
+  workingCourses = []; lockedCrns = new Set();
+  renderCalendarFromWorkingCourses(); updateSaveBtn(); renderSavedList();
 }
 
 function enterNewPlanEditMode() {
   const row = document.querySelector(".saved-item-new-plan");
   if (!row || row.querySelector(".new-plan-input")) return;
-
-  // Only reset calendar when switching from another schedule into New Plan
-  if (activeScheduleKey !== "new") {
-    bumpScheduleViewGeneration();
-    activeScheduleKey = "new";
-    workingCourses = [];
-    lockedCrns = new Set();
-    renderCalendarFromWorkingCourses();
-    updateSaveBtn();
-  } else {
-    // #region agent log
-    fetch("http://127.0.0.1:7590/ingest/2a571ae1-604a-4281-a7bb-8aa23a705774", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "33925b",
-      },
-      body: JSON.stringify({
-        sessionId: "33925b",
-        location: "tab.js:enterNewPlanEditMode",
-        message: "rename only — preserve calendar",
-        data: { wcLen: workingCourses.length },
-        timestamp: Date.now(),
-        hypothesisId: "H1-reselect-new",
-      }),
-    }).catch(() => {});
-    // #endregion
-  }
-
-  document.querySelectorAll("#savedList .saved-item").forEach((el) => {
-    el.classList.toggle("active", el.classList.contains("saved-item-new-plan"));
-  });
-
+  if (activeScheduleKey !== "new") { bumpScheduleViewGeneration(); activeScheduleKey = "new"; workingCourses = []; lockedCrns = new Set(); renderCalendarFromWorkingCourses(); updateSaveBtn(); }
+  document.querySelectorAll("#savedList .saved-item").forEach((el) => el.classList.toggle("active", el.classList.contains("saved-item-new-plan")));
   const span = row.querySelector(".new-plan-label");
   if (!span) return;
-
   span.style.display = "none";
   const input = document.createElement("input");
-  input.type = "text";
-  input.className = "new-plan-input";
-  input.autocomplete = "off";
-  input.value = newPlanDisplayName;
+  input.type = "text"; input.className = "new-plan-input"; input.autocomplete = "off"; input.value = newPlanDisplayName;
   row.appendChild(input);
-  requestAnimationFrame(() => {
-    input.focus();
-    input.select();
-  });
-
+  requestAnimationFrame(() => { input.focus(); input.select(); });
   const commit = () => {
     newPlanDisplayName = input.value.trim();
-    span.textContent = newPlanDisplayName || "New Plan";
-    span.style.display = "";
-    input.remove();
+    span.textContent = newPlanDisplayName || "New Plan"; span.style.display = ""; input.remove();
     row.dataset.planName = newPlanDisplayName;
-    const saveBtn = $("saveTxstBtn");
-    if (saveBtn) saveBtn.dataset.planName = newPlanDisplayName;
+    const saveBtn = $("saveTxstBtn"); if (saveBtn) saveBtn.dataset.planName = newPlanDisplayName;
     newPlanSingleClickOpensEdit = false;
     renderSavedList();
   };
-
   input.addEventListener("blur", commit);
-  input.addEventListener("keydown", (ev) => {
-    if (ev.key === "Enter") {
-      ev.preventDefault();
-      input.blur();
-    }
-    if (ev.key === "Escape") {
-      input.value = newPlanDisplayName;
-      input.blur();
-    }
-  });
+  input.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); input.blur(); } if (ev.key === "Escape") { input.value = newPlanDisplayName; input.blur(); } });
 }
 
 // ============================================================
-// CALENDAR RENDERING — unified from workingCourses
+// CALENDAR CONSTANTS + BUILD EMPTY
 // ============================================================
 
 function buildEmptyCalendar() {
+  clearCalendarCourseMeta();
   let html = '<tr><th class="time-col">Time</th>';
-  DAYS.forEach((d) => {
-    html += "<th>" + d + "</th>";
-  });
+  DAYS.forEach((d) => { html += "<th>" + d + "</th>"; });
   html += "</tr>";
   for (let h = START_HOUR; h < END_HOUR; h++) {
     const label = (h > 12 ? h - 12 : h) + ":00 " + (h >= 12 ? "PM" : "AM");
     html += '<tr><td class="time-label">' + label + "</td>";
-    for (let d = 0; d < 5; d++) {
-      html += '<td id="cell-' + d + "-" + h + '"></td>';
-    }
+    for (let d = 0; d < 5; d++) html += '<td id="cell-' + d + "-" + h + '"></td>';
     html += "</tr>";
   }
   $("calendar").innerHTML = html;
 }
 
 function assignOverlapColumns(cellItems) {
-  cellItems.sort(
-    (a, b) =>
-      a.startOffset - b.startOffset ||
-      String(a.crnKey).localeCompare(String(b.crnKey)),
-  );
+  cellItems.sort((a, b) => a.startOffset - b.startOffset || String(a.crnKey).localeCompare(String(b.crnKey)));
   const colEnd = [];
   for (const it of cellItems) {
     const end = it.startOffset + it.height;
     let c = 0;
-    for (; c < colEnd.length; c++) {
-      if (colEnd[c] <= it.startOffset + 0.5) break;
-    }
-    if (c === colEnd.length) colEnd.push(end);
-    else colEnd[c] = end;
+    for (; c < colEnd.length; c++) { if (colEnd[c] <= it.startOffset + 0.5) break; }
+    if (c === colEnd.length) colEnd.push(end); else colEnd[c] = end;
     it.col = c;
   }
   const n = colEnd.length;
-  cellItems.forEach((it) => {
-    it.colCount = n;
-  });
+  cellItems.forEach((it) => { it.colCount = n; });
 }
+
+// ============================================================
+// CALENDAR RENDERING — unified from workingCourses (52px/hr)
+// ============================================================
 
 function renderCalendarFromWorkingCourses() {
   buildEmptyCalendar();
   const dayMap = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4 };
-
   const cellBuckets = new Map();
 
   for (const course of workingCourses) {
     if (!course.days || !course.beginTime || !course.endTime) continue;
     const [bh, bm] = course.beginTime.split(":").map(Number);
     const [eh, em] = course.endTime.split(":").map(Number);
-    const startOffset = (bm / 60) * 40;
-    const height = (eh + em / 60 - (bh + bm / 60)) * 40;
+    const startOffset = (bm / 60) * PX_PER_HOUR;
+    const height = (eh + em / 60 - (bh + bm / 60)) * PX_PER_HOUR;
     const timeStr = formatTime24to12(bh, bm) + " – " + formatTime24to12(eh, em);
     const crnKey = String(course.crn ?? "");
     const isLocked = lockedCrns.has(crnKey);
@@ -1160,24 +593,11 @@ function renderCalendarFromWorkingCourses() {
       if (dayIdx === undefined) continue;
       const cellKey = dayIdx + "-" + bh;
       if (!cellBuckets.has(cellKey)) cellBuckets.set(cellKey, []);
-      cellBuckets.get(cellKey).push({
-        course,
-        dayIdx,
-        bh,
-        startOffset,
-        height,
-        timeStr,
-        crnKey,
-        isLocked,
-        courseKey,
-        chipClass,
-      });
+      cellBuckets.get(cellKey).push({ course, dayIdx, bh, startOffset, height, timeStr, crnKey, isLocked, courseKey, chipClass });
     }
   }
 
-  for (const [, items] of cellBuckets) {
-    assignOverlapColumns(items);
-  }
+  for (const [, items] of cellBuckets) assignOverlapColumns(items);
 
   for (const [, items] of cellBuckets) {
     for (const p of items) {
@@ -1185,16 +605,13 @@ function renderCalendarFromWorkingCourses() {
       if (!cell) continue;
 
       const block = document.createElement("div");
-      block.className =
-        "course-block " + p.chipClass + (p.isLocked ? " locked" : "");
+      block.className = "course-block " + p.chipClass + (p.isLocked ? " locked" : "");
       block.setAttribute("data-crn", p.crnKey);
       block.style.top = p.startOffset + "px";
       block.style.height = p.height + "px";
       if (p.colCount > 1) {
-        const n = p.colCount;
-        const col = p.col;
-        block.style.left =
-          "calc(3px + " + col + " * ((100% - 6px) / " + n + "))";
+        const n = p.colCount, col = p.col;
+        block.style.left = "calc(3px + " + col + " * ((100% - 6px) / " + n + "))";
         block.style.width = "calc((100% - 6px) / " + n + " - 2px)";
         block.style.right = "auto";
         block.style.zIndex = String(1 + col);
@@ -1206,358 +623,267 @@ function renderCalendarFromWorkingCourses() {
 
       block.innerHTML =
         '<div class="block-info">' +
-        '<div class="course-title">' +
-        p.course.subject +
-        " " +
-        p.course.courseNumber +
-        "</div>" +
-        '<div class="course-time">' +
-        p.timeStr +
-        "</div>" +
-        '<div class="course-time">' +
-        (p.course.title || "") +
-        "</div>" +
+          '<div class="course-title">' + p.course.subject + " " + p.course.courseNumber + "</div>" +
+          '<div class="course-time">' + p.timeStr + "</div>" +
+          '<div class="course-time">' + (p.course.title || "") + "</div>" +
         "</div>" +
         '<div class="block-actions">' +
-        '<button class="block-remove-btn" title="Remove">✕</button>' +
-        '<button class="block-lock-btn" title="' +
-        (p.isLocked ? "Unlock" : "Lock") +
-        '">' +
-        lockSvg +
-        "</button>" +
+          '<button class="block-remove-btn" title="Remove" style="' + (p.isLocked ? "visibility:hidden;" : "") + '">✕</button>' +
+          '<button class="block-lock-btn" title="' + (p.isLocked ? "Unlock" : "Lock") + '">' + lockSvg + "</button>" +
         "</div>";
 
-      const removeBtn = block.querySelector(".block-remove-btn");
-      if (removeBtn) {
-        removeBtn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          removeFromWorkingSchedule(p.crnKey);
-        });
+      // Register meta for modal
+      if (p.crnKey) {
+        let meta = calendarCourseMetaByCrn.get(p.crnKey);
+        if (!meta) {
+          meta = { crn: p.crnKey, courseCode: p.course.subject + " " + p.course.courseNumber, subject: p.course.subject, courseNumber: p.course.courseNumber, title: p.course.title || "—", section: "—", professor: "—", location: "—", instructionalMethod: "—", meetingTimeDisplay: p.timeStr };
+          registerCourseMeta(p.crnKey, meta);
+        } else {
+          meta.meetingTimeDisplay = meta.meetingTimeDisplay || p.timeStr;
+        }
       }
 
-      const lockBtn = block.querySelector(".block-lock-btn");
-      if (lockBtn) {
-        lockBtn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          toggleLock(p.crnKey);
-        });
-      }
+      block.querySelector(".block-remove-btn")?.addEventListener("click", (e) => { e.stopPropagation(); removeFromWorkingSchedule(p.crnKey); });
+      block.querySelector(".block-lock-btn")?.addEventListener("click", (e) => { e.stopPropagation(); toggleLock(p.crnKey); });
 
       cell.appendChild(block);
     }
   }
 }
 
-// Legacy: still used by renderSavedScheduleOnCalendar when viewing a saved snapshot
-function renderCoursesOnCalendar(events) {
-  buildEmptyCalendar();
-  updateWeekHours(events);
-  updateOverviewFromEvents(events);
-  const seen = new Set();
-  for (const event of events) {
-    const startDate = new Date(event.start);
-    const endDate = new Date(event.end);
-    const dayIdx = startDate.getDay() - 1;
-    if (dayIdx < 0 || dayIdx > 4) continue;
-    const key = event.crn + "-" + dayIdx;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const bh = startDate.getHours(),
-      bm = startDate.getMinutes();
-    const eh = endDate.getHours(),
-      em = endDate.getMinutes();
-    const startOffset = (bm / 60) * 40;
-    const height = (eh + em / 60 - (bh + bm / 60)) * 40;
-    const timeStr = formatTime24to12(bh, bm) + " – " + formatTime24to12(eh, em);
-    const cell = $("cell-" + dayIdx + "-" + bh);
-    if (!cell) continue;
-    const courseKey = event.subject + event.courseNumber;
-    const block = document.createElement("div");
-    block.className = "course-block " + getChipForCourse(courseKey);
-    block.setAttribute("data-crn", event.crn || "");
-    block.style.top = startOffset + "px";
-    block.style.height = height + "px";
-    block.innerHTML =
-      '<div class="block-info">' +
-      '<div class="course-title">' +
-      event.subject +
-      " " +
-      event.courseNumber +
-      "</div>" +
-      '<div class="course-time">' +
-      timeStr +
-      "</div>" +
-      '<div class="course-time">' +
-      event.title +
-      "</div>" +
-      "</div>";
-    cell.appendChild(block);
-  }
+// ============================================================
+// MODAL METADATA INFRASTRUCTURE (Simone)
+// ============================================================
+
+function pickFirstStr(...vals) {
+  for (const v of vals) { if (v == null || v === "") continue; const s = typeof v === "number" ? String(v) : String(v).trim(); if (s) return s; } return "";
 }
 
-function formatTime24to12(h, m) {
-  const ampm = h >= 12 ? "PM" : "AM";
-  const h12 = h > 12 ? h - 12 : h === 0 ? 12 : h;
-  return h12 + ":" + String(m).padStart(2, "0") + " " + ampm;
+function formatInstructionalMethodLabel(code) {
+  const u = String(code || "").trim().toUpperCase();
+  if (!u) return "—";
+  if (u === "INT" || u === "IN" || u === "INS" || u === "WEB") return "Internet (Online)";
+  if (u === "TR" || u === "TRD") return "Traditional (in person)";
+  if (u === "HYB" || u === "HY") return "Hybrid";
+  return String(code).length > 48 ? String(code).slice(0, 45) + "…" : String(code);
 }
-function formatChatTime(t) {
-  if (!t) return "";
-  return formatTime24to12(parseInt(t.slice(0, 2)), parseInt(t.slice(2)));
+
+function expandRegistrationEvent(raw) {
+  if (!raw || typeof raw !== "object") return raw;
+  const xp = raw.extendedProps || raw.extendedProperties || raw.resource || raw.eventExtendedProps;
+  const merged = xp && typeof xp === "object" ? { ...xp, ...raw } : { ...raw };
+  const out = { ...merged };
+  const mergeCo = (co) => {
+    if (!co || typeof co !== "object") return;
+    const crn = co.courseReferenceNumber ?? co.crn ?? co.courseRegistrationNumber;
+    if (crn != null && String(crn).trim() && !pickFirstStr(out.crn, out.courseReferenceNumber)) { out.courseReferenceNumber = String(crn).trim(); out.crn = String(crn).trim(); }
+    const subj = pickFirstStr(co.subject, co.subjectCode, co.courseSubject); if (subj && !pickFirstStr(out.subject, out.subjectCode)) out.subject = subj;
+    const num = pickFirstStr(co.courseNumber, co.number, co.catalogNumber, co.courseNum); if (num && !pickFirstStr(out.courseNumber)) out.courseNumber = num;
+    const seq = pickFirstStr(co.sequenceNumber, co.sectionNumber, co.section, co.sequence); if (seq && !pickFirstStr(out.sequenceNumber, out.sectionNumber, out.section)) out.sequenceNumber = seq;
+    if (Array.isArray(co.meetingsFaculty) && (!Array.isArray(out.meetingsFaculty) || !out.meetingsFaculty.length)) out.meetingsFaculty = co.meetingsFaculty;
+    const title = pickFirstStr(co.courseTitle, co.courseDescription, co.title); if (title && !pickFirstStr(out.title, out.courseTitle)) { out.title = title; out.courseTitle = title; }
+    if (co.instructionalMethod != null && out.instructionalMethod == null) out.instructionalMethod = co.instructionalMethod;
+  };
+  mergeCo(out.courseOffering); mergeCo(out.sectionHeader); mergeCo(out.sectionInformation); mergeCo(out.section);
+  const sc = out.subjectCourse;
+  if (sc && typeof sc === "object") { const sj = pickFirstStr(sc.subject, sc.subjectCode); const nm = pickFirstStr(sc.courseNumber, sc.number); if (sj && !pickFirstStr(out.subject)) out.subject = sj; if (nm && !pickFirstStr(out.courseNumber)) out.courseNumber = nm; }
+  return out;
 }
-function timeStrToMinutes(t) {
-  if (!t) return null;
-  return parseInt(t.slice(0, 2)) * 60 + parseInt(t.slice(2));
-}
-function sectionsConflict(a, b) {
-  if (!a.days || !b.days || !a.start || !b.start) return false;
-  const sharedDays = a.days.filter((d) => b.days.includes(d));
-  if (sharedDays.length === 0) return false;
-  return (
-    timeStrToMinutes(a.start) < timeStrToMinutes(b.end) &&
-    timeStrToMinutes(b.start) < timeStrToMinutes(a.end)
-  );
-}
-function findFirstConflict(courses) {
-  for (let i = 0; i < courses.length; i++) {
-    for (let j = i + 1; j < courses.length; j++) {
-      if (sectionsConflict(courses[i], courses[j]))
-        return { a: courses[i], b: courses[j] };
+
+function mergeRegistrationEventRows(rows) {
+  if (!rows || !rows.length) return null;
+  if (rows.length === 1) return { ...rows[0] };
+  const out = { ...rows[0] };
+  for (let i = 1; i < rows.length; i++) {
+    const b = rows[i];
+    for (const k of Object.keys(b)) {
+      const bv = b[k]; if (bv == null || bv === "") continue;
+      if (k === "meetingsFaculty" && Array.isArray(bv)) { out[k] = [...(out[k] || []), ...bv]; continue; }
+      if (out[k] == null || out[k] === "") out[k] = bv;
     }
   }
-  const lockedList = getLockedForLLM();
-  for (const proposed of courses) {
-    if (lockedList.some((r) => r.crn === proposed.crn)) continue;
-    for (const locked of lockedList) {
-      if (sectionsConflict(proposed, locked))
-        return {
-          a: proposed,
-          b: { ...locked, course: locked.course + " (locked)" },
-        };
+  return out;
+}
+
+function groupRegistrationEventsByCrn(events) {
+  const buckets = new Map();
+  for (const ev of events || []) {
+    const crn = String(ev.crn ?? ev.courseReferenceNumber ?? "").trim();
+    if (!crn) continue;
+    if (!buckets.has(crn)) buckets.set(crn, []);
+    buckets.get(crn).push(ev);
+  }
+  const merged = new Map();
+  buckets.forEach((rows, crn) => merged.set(crn, mergeRegistrationEventRows(rows)));
+  return merged;
+}
+
+function extractFacultyName(ev) {
+  const tryFac = (f) => { if (!f) return ""; const n = f.displayName || f.preferredName || f.fullName || f.sortName || f.name || (f.firstName && f.lastName ? f.lastName + ", " + f.firstName : "") || ""; if (!n || n === "Faculty, Unassigned") return ""; return String(n).trim(); };
+  if (Array.isArray(ev.faculty)) { for (const f of ev.faculty) { const n = tryFac(f); if (n) return n; } }
+  if (Array.isArray(ev.meetingsFaculty)) {
+    for (const mf of ev.meetingsFaculty) {
+      const direct = pickFirstStr(mf.facultyDisplayName, mf.displayName, mf.instructorName, typeof mf.faculty === "string" ? mf.faculty : ""); if (direct) return direct;
+      const arr = mf.faculty || mf.instructors || mf.instructor;
+      const list = Array.isArray(arr) ? arr : arr ? [arr] : [];
+      for (const f of list) { const n = tryFac(f); if (n) return n; }
     }
   }
-  return null;
+  return pickFirstStr(typeof ev.instructor === "string" ? ev.instructor : "", ev.instructorName, ev.primaryInstructor, ev.facultyDisplayName);
+}
+
+function extractMeetingLocation(ev) {
+  const fromMt = (mt) => { if (!mt) return ""; const bits = [mt.buildingDescription, mt.buildingAndRoomDescription, mt.facilityDescription, mt.building, mt.room, mt.roomNumber, mt.campusDescription, mt.campus].filter(Boolean); return bits.length ? bits.join(" · ") : ""; };
+  if (Array.isArray(ev.meetingsFaculty)) { for (const mf of ev.meetingsFaculty) { const mt = mf.meetingTime || mf.meetTime || mf.schedule || mf.classMeeting; const loc = fromMt(mt); if (loc) return loc; } }
+  const loc = fromMt(ev.meetingTime || ev.schedule || ev.scheduledMeeting); if (loc) return loc;
+  return pickFirstStr(ev.buildingDescription, ev.roomDescription, ev.room, ev.building, ev.campusDescription, ev.campus, ev.meetingSchedule, ev.location);
+}
+
+function extractMetaFromRegistrationEvent(rawEv) {
+  const ev = expandRegistrationEvent(rawEv);
+  const crn = String(ev.crn ?? ev.courseReferenceNumber ?? "").trim();
+  const subject = pickFirstStr(ev.subject, ev.subjectCode, ev.courseSubject);
+  const courseNumber = pickFirstStr(ev.courseNumber, ev.courseNum, ev.number, ev.catalogNumber);
+  const courseCode = (subject + " " + courseNumber).trim();
+  const title = pickFirstStr(ev.title, ev.courseTitle, ev.courseDescription, ev.scheduleDescription);
+  const sectionRaw = pickFirstStr(ev.sequenceNumber, ev.sectionNumber, typeof ev.section === "string" || typeof ev.section === "number" ? ev.section : "", ev.sequence);
+  const section = sectionRaw || "—";
+  const prof = extractFacultyName(ev);
+  const imRaw = ev.instructionalMethod;
+  const imAlt = pickFirstStr(imRaw, ev.scheduleType, ev.courseInstructionalMethod, ev.courseInstructionalMethodDescription, ev.instructionalMethodDescription);
+  let location = extractMeetingLocation(ev);
+  let methodLabel = imAlt ? formatInstructionalMethodLabel(imAlt) : "—";
+  if (!location && (String(imAlt || "").toUpperCase() === "INT" || methodLabel.includes("Online"))) location = "Online";
+  return { crn, courseCode, subject, courseNumber, title: title || "—", section, professor: prof ? String(prof).trim() : "—", location: location || "—", instructionalMethod: methodLabel, meetingTimeDisplay: "" };
+}
+
+function isDashPlaceholder(val) { const s = String(val ?? "").trim(); return !s || s === "—"; }
+
+function mergeRegistrationMetaForModal(existing, fresh) {
+  const pick = (oldVal, newVal) => !isDashPlaceholder(newVal) ? newVal : oldVal;
+  if (!fresh) return existing;
+  const base = existing || {};
+  return { crn: pick(base.crn, fresh.crn), courseCode: pick(base.courseCode, fresh.courseCode), subject: pick(base.subject, fresh.subject), courseNumber: pick(base.courseNumber, fresh.courseNumber), title: pick(base.title, fresh.title), section: pick(base.section, fresh.section), professor: pick(base.professor, fresh.professor), location: pick(base.location, fresh.location), instructionalMethod: pick(base.instructionalMethod, fresh.instructionalMethod), meetingTimeDisplay: base.meetingTimeDisplay || fresh.meetingTimeDisplay || "" };
+}
+
+function parseCourseCodeFromTitle(titleLine) {
+  const m = String(titleLine || "").trim().match(/^([A-Za-z&]{2,12})\s+(\d{3,5}[A-Za-z]?)\b/);
+  if (m) return { subject: m[1].toUpperCase(), courseNumber: m[2] };
+  return { subject: "", courseNumber: "" };
+}
+
+const RMP_TXST_SCHOOL_ID = "938";
+function professorNameForRateMyProfessorsQuery(displayName) {
+  const raw = String(displayName || "").trim();
+  if (!raw || raw === "—" || /unassigned|tba|^staff$/i.test(raw.toLowerCase())) return "";
+  const comma = raw.indexOf(",");
+  if (comma > 0) { const last = raw.slice(0, comma).trim(); const after = raw.slice(comma + 1).trim().replace(/\s+/g, " "); if (last && after) return (after.split(/\s+/)[0] + " " + last).trim(); return last; }
+  return raw;
+}
+function buildRateMyProfessorsUrl(professorDisplayName) {
+  const q = professorNameForRateMyProfessorsQuery(professorDisplayName);
+  if (!q) return `https://www.ratemyprofessors.com/school/${RMP_TXST_SCHOOL_ID}`;
+  return `https://www.ratemyprofessors.com/search/professors/${RMP_TXST_SCHOOL_ID}?q=${encodeURIComponent(q)}`;
+}
+
+const TXST_REG_BASE = "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb";
+async function fetchBannerSectionRowByCrn(term, crn, subject, courseNumber) {
+  const crnStr = String(crn || "").trim(), sub = String(subject || "").trim(), num = String(courseNumber || "").trim();
+  if (!crnStr || !term || !sub || !num) return null;
+  try {
+    await fetch(TXST_REG_BASE + "/ssb/classSearch/resetDataForm", { method: "POST", credentials: "include" });
+    await fetch(TXST_REG_BASE + "/ssb/term/search?mode=search", { method: "POST", credentials: "include", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ term, studyPath: "", studyPathText: "", startDatepicker: "", endDatepicker: "" }).toString() });
+    const form = new FormData();
+    form.append("txt_subject", sub); form.append("txt_courseNumber", num); form.append("txt_term", term);
+    form.append("pageOffset", "0"); form.append("pageMaxSize", "500"); form.append("sortColumn", "subjectDescription"); form.append("sortDirection", "asc");
+    form.append("startDatepicker", ""); form.append("endDatepicker", ""); form.append("uniqueSessionId", sub + num + "-bobcat-modal-" + Date.now());
+    const res = await fetch(TXST_REG_BASE + "/ssb/searchResults/searchResults", { method: "POST", credentials: "include", body: form });
+    if (!res.ok) return null;
+    const data = await res.json().catch(() => null);
+    if (!data?.success || !Array.isArray(data.data)) return null;
+    return data.data.find((s) => String(s.courseReferenceNumber || "").trim() === crnStr) || null;
+  } catch (e) { console.warn("[BobcatPlus] fetchBannerSectionRowByCrn:", e); return null; }
 }
 
 // ============================================================
-// LOCKED COURSES → LLM format
-// ============================================================
-
-function getLockedForLLM() {
-  // Returns all locked courses in the LLM-compatible format
-  return workingCourses
-    .filter((c) => lockedCrns.has(String(c.crn)))
-    .map((c) => {
-      const startStr = c.beginTime ? c.beginTime.replace(":", "") : null;
-      const endStr = c.endTime ? c.endTime.replace(":", "") : null;
-      return {
-        crn: c.crn,
-        course: c.subject + " " + c.courseNumber,
-        title: c.title || "",
-        days: c.days || [],
-        start: startStr,
-        end: endStr,
-      };
-    });
-}
-
-// ============================================================
-// BUILD PANEL — eligible courses picker
+// ELIGIBLE COURSES
 // ============================================================
 
 function formatSectionOneLine(section) {
-  const sn = String(
-    section.sequenceNumber ?? section.sectionNumber ?? section.section ?? "?",
-  );
+  const sn = String(section.sequenceNumber ?? section.sectionNumber ?? section.section ?? "?");
   const mt = section.meetingsFaculty?.[0]?.meetingTime;
   let timeStr = "";
   if (mt && mt.beginTime) {
     const days = [];
-    if (mt.monday) days.push("Mon");
-    if (mt.tuesday) days.push("Tue");
-    if (mt.wednesday) days.push("Wed");
-    if (mt.thursday) days.push("Thu");
-    if (mt.friday) days.push("Fri");
-    const bh = parseInt(mt.beginTime.slice(0, 2));
-    const bm = parseInt(mt.beginTime.slice(2));
-    const eh = parseInt(mt.endTime.slice(0, 2));
-    const em = parseInt(mt.endTime.slice(2));
-    if (days.length)
-      timeStr =
-        " · " +
-        days.join("/") +
-        " " +
-        formatTime24to12(bh, bm) +
-        "–" +
-        formatTime24to12(eh, em);
+    if (mt.monday) days.push("Mon"); if (mt.tuesday) days.push("Tue"); if (mt.wednesday) days.push("Wed"); if (mt.thursday) days.push("Thu"); if (mt.friday) days.push("Fri");
+    const bh = parseInt(mt.beginTime.slice(0, 2)), bm = parseInt(mt.beginTime.slice(2));
+    const eh = parseInt(mt.endTime.slice(0, 2)), em = parseInt(mt.endTime.slice(2));
+    if (days.length) timeStr = " · " + days.join("/") + " " + formatTime24to12(bh, bm) + "–" + formatTime24to12(eh, em);
   }
   const online = section.instructionalMethod === "INT" ? " · Online" : "";
-  const seats =
-    section.seatsAvailable != null
-      ? " · " + section.seatsAvailable + " seats"
-      : "";
+  const seats = section.seatsAvailable != null ? " · " + section.seatsAvailable + " seats" : "";
   return "Section " + sn + timeStr + online + seats;
 }
 
 function renderEligibleList() {
-  const list = $("eligibleList");
-  const status = $("eligibleStatus");
+  const list = $("eligibleList"), status = $("eligibleStatus");
   if (!list) return;
-
-  if (!eligibleCourses || eligibleCourses.length === 0) {
+  if (!eligibleCourses || !eligibleCourses.length) {
     list.innerHTML = "";
-    if (status && !analysisResults)
-      status.textContent = "Loading eligible courses…";
-    else if (status)
-      status.textContent = "No eligible courses found for this term.";
+    if (status) status.textContent = !analysisResults ? "Loading eligible courses…" : "No eligible courses found for this term.";
     return;
   }
-
   const seenKeys = new Set();
-  const dedupedCourses = eligibleCourses.filter((course) => {
-    const k = course.subject + "-" + course.courseNumber;
-    if (seenKeys.has(k)) return false;
-    seenKeys.add(k);
-    return true;
-  });
-
+  const dedupedCourses = eligibleCourses.filter((course) => { const k = course.subject + "-" + course.courseNumber; if (seenKeys.has(k)) return false; seenKeys.add(k); return true; });
   if (status) status.textContent = dedupedCourses.length + " eligible courses";
   list.innerHTML = "";
 
   dedupedCourses.forEach((course) => {
     const key = course.subject + "-" + course.courseNumber;
-    const openCount = (course.sections || []).filter(
-      (s) => s.openSection,
-    ).length;
+    const openCount = (course.sections || []).filter((s) => s.openSection).length;
     const totalCount = (course.sections || []).length;
-    const alreadyAdded = workingCourses.some(
-      (c) =>
-        c.subject === course.subject &&
-        c.courseNumber === course.courseNumber &&
-        c.source !== "registered",
-    );
-
+    const alreadyAdded = workingCourses.some((c) => c.subject === course.subject && c.courseNumber === course.courseNumber && c.source !== "registered");
     const item = document.createElement("div");
     item.className = "eligible-course" + (alreadyAdded ? " added" : "");
-
     const header = document.createElement("div");
     header.className = "eligible-course-header";
-    header.innerHTML =
-      '<span class="eligible-name">' +
-      course.subject +
-      " " +
-      course.courseNumber +
-      '<span class="eligible-req"> — ' +
-      (course.label || "") +
-      "</span></span>" +
-      '<span class="eligible-meta">' +
-      openCount +
-      "/" +
-      totalCount +
-      " open</span>";
-
-    header.addEventListener("click", () => {
-      expandedCourseKey = expandedCourseKey === key ? null : key;
-      renderEligibleList();
-    });
+    header.innerHTML = '<span class="eligible-name">' + course.subject + " " + course.courseNumber + '<span class="eligible-req"> — ' + (course.label || "") + "</span></span>" + '<span class="eligible-meta">' + openCount + "/" + totalCount + " open</span>";
+    header.addEventListener("click", () => { expandedCourseKey = expandedCourseKey === key ? null : key; renderEligibleList(); });
     item.appendChild(header);
 
     if (expandedCourseKey === key) {
       const body = document.createElement("div");
       body.className = "eligible-course-body";
-
-      // Course title header
-      const courseTitle =
-        course.sections[0]?.courseTitle
-          ?.replace(/&amp;/g, "&")
-          ?.replace(/&#39;/g, "'") || "";
-      if (courseTitle) {
-        const titleEl = document.createElement("div");
-        titleEl.className = "eligible-course-title";
-        titleEl.textContent = courseTitle;
-        body.appendChild(titleEl);
-      }
-
+      const courseTitle = course.sections[0]?.courseTitle?.replace(/&amp;/g, "&")?.replace(/&#39;/g, "'") || "";
+      if (courseTitle) { const titleEl = document.createElement("div"); titleEl.className = "eligible-course-title"; titleEl.textContent = courseTitle; body.appendChild(titleEl); }
       const seenCrns = new Set();
-      const sections = (course.sections || []).filter((s) => {
-        const crn = String(s.courseReferenceNumber || "");
-        if (!crn || seenCrns.has(crn)) return false;
-        seenCrns.add(crn);
-        return true;
-      });
+      const sections = (course.sections || []).filter((s) => { const crn = String(s.courseReferenceNumber || ""); if (!crn || seenCrns.has(crn)) return false; seenCrns.add(crn); return true; });
       const currentIdx = selectedSectionByCourse[key] ?? 0;
-
       sections.forEach((s, i) => {
         const lbl = document.createElement("label");
         lbl.className = "manual-result-row";
-        lbl.innerHTML =
-          '<input type="radio" name="sec-' +
-          key +
-          '" data-idx="' +
-          i +
-          '" ' +
-          (i === currentIdx ? "checked" : "") +
-          "> " +
-          formatSectionOneLine(s);
-        lbl.querySelector("input").addEventListener("change", () => {
-          selectedSectionByCourse[key] = i;
-        });
+        lbl.innerHTML = '<input type="radio" name="sec-' + key + '" data-idx="' + i + '" ' + (i === currentIdx ? "checked" : "") + "> " + formatSectionOneLine(s);
+        lbl.querySelector("input").addEventListener("change", () => { selectedSectionByCourse[key] = i; });
         body.appendChild(lbl);
       });
-
       const addBtn = document.createElement("button");
-      addBtn.type = "button";
-      addBtn.className = "manual-small-btn";
-      addBtn.style.marginTop = "4px";
-      addBtn.textContent = alreadyAdded
-        ? "Replace on calendar"
-        : "Add to calendar";
+      addBtn.type = "button"; addBtn.className = "manual-small-btn"; addBtn.style.marginTop = "4px";
+      addBtn.textContent = alreadyAdded ? "Replace on calendar" : "Add to calendar";
       addBtn.addEventListener("click", () => {
-        const idx = selectedSectionByCourse[key] ?? 0;
-        const section = sections[idx];
+        const idx = selectedSectionByCourse[key] ?? 0, section = sections[idx];
         if (!section) return;
         const crn = String(section.courseReferenceNumber || "");
-        if (!crn) {
-          $("statusBar").textContent = "Section has no CRN.";
-          return;
-        }
-
+        if (!crn) { $("statusBar").textContent = "Section has no CRN."; return; }
         const mt = section.meetingsFaculty?.[0]?.meetingTime;
         const days = [];
-        if (mt?.monday) days.push("Mon");
-        if (mt?.tuesday) days.push("Tue");
-        if (mt?.wednesday) days.push("Wed");
-        if (mt?.thursday) days.push("Thu");
-        if (mt?.friday) days.push("Fri");
-        const beginTime = mt?.beginTime
-          ? mt.beginTime.slice(0, 2) + ":" + mt.beginTime.slice(2)
-          : null;
-        const endTime = mt?.endTime
-          ? mt.endTime.slice(0, 2) + ":" + mt.endTime.slice(2)
-          : null;
-
-        addToWorkingSchedule({
-          crn,
-          subject: course.subject,
-          courseNumber: course.courseNumber,
-          title: section.courseTitle || course.sections[0]?.courseTitle || "",
-          days,
-          beginTime,
-          endTime,
-          source: "manual",
-          online: section.instructionalMethod === "INT",
-        });
-
+        if (mt?.monday) days.push("Mon"); if (mt?.tuesday) days.push("Tue"); if (mt?.wednesday) days.push("Wed"); if (mt?.thursday) days.push("Thu"); if (mt?.friday) days.push("Fri");
+        const beginTime = mt?.beginTime ? mt.beginTime.slice(0, 2) + ":" + mt.beginTime.slice(2) : null;
+        const endTime = mt?.endTime ? mt.endTime.slice(0, 2) + ":" + mt.endTime.slice(2) : null;
+        addToWorkingSchedule({ crn, subject: course.subject, courseNumber: course.courseNumber, title: section.courseTitle || course.sections[0]?.courseTitle || "", days, beginTime, endTime, source: "manual", online: section.instructionalMethod === "INT" });
         expandedCourseKey = null;
-        $("statusBar").textContent =
-          "Added " +
-          course.subject +
-          " " +
-          course.courseNumber +
-          " to calendar.";
-        renderEligibleList();
-        updateSaveBtn();
+        $("statusBar").textContent = "Added " + course.subject + " " + course.courseNumber + " to calendar.";
+        renderEligibleList(); updateSaveBtn();
       });
-
       body.appendChild(addBtn);
       item.appendChild(body);
     }
@@ -1566,97 +892,35 @@ function renderEligibleList() {
 }
 
 // ============================================================
-// SAVE TO TXST BUTTON (explicit, not automatic)
+// SAVE TO TXST
 // ============================================================
 
 document.addEventListener("DOMContentLoaded", () => {
   const saveTxstBtn = $("saveTxstBtn");
-  const planNameInput = $("txstPlanName");
   if (saveTxstBtn) {
     saveTxstBtn.addEventListener("click", async () => {
       if (saveTxstBtn.disabled) return;
-
-      // Get plan name — from the New Plan item's stored name or prompt
       const newPlanItems = document.querySelectorAll(".saved-item-new-plan");
       let planName = "";
-      newPlanItems.forEach((el) => {
-        if (el.dataset.planName) planName = el.dataset.planName.trim();
-      });
-
+      newPlanItems.forEach((el) => { if (el.dataset.planName) planName = el.dataset.planName.trim(); });
+      if (!planName) planName = newPlanDisplayName;
       if (!planName) {
         const newPlanLabel = document.querySelector(".new-plan-label");
-        if (newPlanLabel) {
-          newPlanLabel.style.color = "var(--maroon)";
-          newPlanLabel.textContent = "Name your plan (double-click New Plan)";
-          setTimeout(() => {
-            newPlanLabel.style.color = "";
-            newPlanLabel.textContent = newPlanDisplayName || "New Plan";
-          }, 2500);
-        }
-        $("statusBar").textContent =
-          "Double-click New Plan to enter a name, or type one and click away.";
-        return;
+        if (newPlanLabel) { newPlanLabel.style.color = "var(--maroon)"; newPlanLabel.textContent = "Name your plan (click New Plan)"; setTimeout(() => { newPlanLabel.style.color = ""; newPlanLabel.textContent = newPlanDisplayName || "New Plan"; }, 2500); }
+        $("statusBar").textContent = "Click New Plan to enter a name first."; return;
       }
-
-      const nonRegistered = workingCourses.filter(
-        (c) => c.source !== "registered",
-      );
-      if (nonRegistered.length === 0) {
-        $("statusBar").textContent = "Add courses before saving.";
-        return;
-      }
-
-      $("statusBar").textContent = "Saving to TXST…";
-      saveTxstBtn.disabled = true;
-
-      const rows = nonRegistered.map((c) => {
-        const courseMatch = (eligibleCourses || []).find(
-          (ec) =>
-            ec.subject === c.subject && ec.courseNumber === c.courseNumber,
-        );
-        const section = courseMatch?.sections?.find(
-          (s) => String(s.courseReferenceNumber) === c.crn,
-        );
-        return {
-          section: section || {
-            courseReferenceNumber: c.crn,
-            courseTitle: c.title,
-          },
-          subject: c.subject,
-          courseNumber: c.courseNumber,
-        };
-      });
-
-      const resp = await sendToBackground({
-        action: "saveTxstPlan",
-        term: currentTerm,
-        planName,
-        rows,
-      });
-      saveTxstBtn.disabled = false;
-      updateSaveBtn();
-      if (!resp.ok) {
-        $("statusBar").textContent = resp.error || "Save failed.";
-        return;
-      }
+      const nonRegistered = workingCourses.filter((c) => c.source !== "registered");
+      if (!nonRegistered.length) { $("statusBar").textContent = "Add courses before saving."; return; }
+      $("statusBar").textContent = "Saving to TXST…"; saveTxstBtn.disabled = true;
+      const rows = nonRegistered.map((c) => { const courseMatch = (eligibleCourses || []).find((ec) => ec.subject === c.subject && ec.courseNumber === c.courseNumber); const section = courseMatch?.sections?.find((s) => String(s.courseReferenceNumber) === c.crn); return { section: section || { courseReferenceNumber: c.crn, courseTitle: c.title }, subject: c.subject, courseNumber: c.courseNumber }; });
+      const resp = await sendToBackground({ action: "saveTxstPlan", term: currentTerm, planName, rows });
+      saveTxstBtn.disabled = false; updateSaveBtn();
+      if (!resp.ok) { $("statusBar").textContent = resp.error || "Save failed."; return; }
       $("statusBar").textContent = "Saved to TXST: " + planName;
-
-      // Reset the New Plan item name
-      newPlanDisplayName = "";
-      newPlanSingleClickOpensEdit = true;
-      if (newPlanClickTimer) {
-        clearTimeout(newPlanClickTimer);
-        newPlanClickTimer = null;
-      }
-      document.querySelectorAll(".saved-item-new-plan").forEach((el) => {
-        el.dataset.planName = "";
-        const lbl = el.querySelector(".new-plan-label");
-        if (lbl) lbl.textContent = "New Plan";
-      });
+      newPlanDisplayName = ""; newPlanSingleClickOpensEdit = true;
+      document.querySelectorAll(".saved-item-new-plan").forEach((el) => { el.dataset.planName = ""; const lbl = el.querySelector(".new-plan-label"); if (lbl) lbl.textContent = "New Plan"; });
       if (saveTxstBtn) saveTxstBtn.dataset.planName = "";
-
-      await loadBannerPlans(currentTerm);
-      renderSavedList();
+      await loadBannerPlans(currentTerm); renderSavedList();
     });
   }
 });
@@ -1667,10 +931,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
 async function loadBannerPlans(term) {
   const plans = await sendToBackground({ action: "getAllBannerPlans", term });
-  if (Array.isArray(plans)) {
-    bannerPlans = plans;
-    renderSavedList();
-  }
+  if (Array.isArray(plans)) { bannerPlans = plans; renderSavedList(); }
   $("statusBar").textContent = "Ready";
 }
 
@@ -1680,244 +941,112 @@ function renderSavedList() {
   const termSchedules = savedSchedules.filter((s) => s.term === currentTerm);
   list.innerHTML = "";
 
-  // ── Current Registered Schedule ──
+  // Current Registered Schedule
   const regItem = document.createElement("div");
-  regItem.className =
-    "saved-item saved-item-registered" +
-    (activeScheduleKey === "registered" ? " active" : "");
+  regItem.className = "saved-item saved-item-registered" + (activeScheduleKey === "registered" ? " active" : "");
   regItem.innerHTML = '<span class="name">Current Registered Schedule</span>';
   regItem.addEventListener("click", () => {
-    bumpScheduleViewGeneration();
-    activeScheduleKey = "registered";
+    bumpScheduleViewGeneration(); activeScheduleKey = "registered";
     const cached = registeredScheduleCache[currentTerm];
-    if (cached && cached.length) {
-      const { registered, locks } = buildRegisteredCoursesFromEvents(cached);
-      lockedCrns = locks;
-      workingCourses = registered;
-    } else {
-      workingCourses = workingCourses.filter((c) => c.source === "registered");
-      lockedCrns = new Set(workingCourses.map((c) => String(c.crn)));
-    }
-    renderCalendarFromWorkingCourses();
-    renderSavedList();
-    $("statusBar").textContent = "Viewing registered schedule";
-    updateSaveBtn();
+    if (cached && cached.length) { const { registered, locks } = buildRegisteredCoursesFromEvents(cached); lockedCrns = locks; workingCourses = registered; }
+    else { workingCourses = workingCourses.filter((c) => c.source === "registered"); lockedCrns = new Set(workingCourses.map((c) => String(c.crn))); }
+    renderCalendarFromWorkingCourses(); renderSavedList(); $("statusBar").textContent = "Viewing registered schedule"; updateSaveBtn();
   });
   list.appendChild(regItem);
 
-  // ── Locally saved AI schedules ──
+  // Locally saved AI schedules
   termSchedules.forEach((schedule, i) => {
     const key = "saved:" + i;
     const item = document.createElement("div");
-    item.className =
-      "saved-item" + (activeScheduleKey === key ? " active" : "");
-    item.innerHTML =
-      '<span class="name">' +
-      schedule.name +
-      "</span>" +
-      '<span class="info">' +
-      schedule.courses.length +
-      " courses</span>" +
-      '<span class="delete-btn" data-key="' +
-      key +
-      '" data-idx="' +
-      i +
-      '">×</span>';
-    item.addEventListener("click", (e) => {
-      if (e.target.classList.contains("delete-btn")) return;
-      bumpScheduleViewGeneration();
-      activeScheduleKey = key;
-      renderSavedScheduleOnCalendar(schedule);
-      renderSavedList();
-    });
+    item.className = "saved-item" + (activeScheduleKey === key ? " active" : "");
+    item.innerHTML = '<span class="name">' + schedule.name + "</span>" + '<span class="info">' + schedule.courses.length + " courses</span>" + '<span class="delete-btn" data-key="' + key + '" data-idx="' + i + '">×</span>';
+    item.addEventListener("click", (e) => { if (e.target.classList.contains("delete-btn")) return; bumpScheduleViewGeneration(); activeScheduleKey = key; renderSavedScheduleOnCalendar(schedule); renderSavedList(); });
     list.appendChild(item);
   });
 
-  // ── TXST Banner plans ──
+  // TXST Banner plans
   bannerPlans.forEach((plan, pi) => {
     const key = "banner:" + pi;
     const item = document.createElement("div");
-    item.className =
-      "saved-item" + (activeScheduleKey === key ? " active" : "");
-    item.innerHTML =
-      '<span class="banner-badge">TXST</span>' +
-      '<span class="name">' +
-      plan.name +
-      "</span>" +
-      '<span class="delete-btn txst-delete" title="Delete from TXST">×</span>';
-
+    item.className = "saved-item" + (activeScheduleKey === key ? " active" : "");
+    item.innerHTML = '<span class="banner-badge">TXST</span><span class="name">' + plan.name + "</span>" + '<span class="delete-btn txst-delete" title="Delete from TXST">×</span>';
     item.querySelector(".txst-delete").addEventListener("click", async (e) => {
       e.stopPropagation();
       if (!confirm('Delete "' + plan.name + '" from TXST?')) return;
       $("statusBar").textContent = "Deleting " + plan.name + "…";
-      const resp = await sendToBackground({
-        action: "deleteTxstPlan",
-        term: currentTerm,
-        planIndex: plan.txstPlanIndex,
-      });
-      if (!resp.ok) {
-        $("statusBar").textContent =
-          "Delete failed: " + (resp.error || "unknown");
-        return;
-      }
+      const resp = await sendToBackground({ action: "deleteTxstPlan", term: currentTerm, planIndex: plan.txstPlanIndex });
+      if (!resp.ok) { $("statusBar").textContent = "Delete failed: " + (resp.error || "unknown"); return; }
       bannerPlans.splice(pi, 1);
-      if (activeScheduleKey === key) {
-        activeScheduleKey = "registered";
-        workingCourses = workingCourses.filter(
-          (c) => c.source === "registered",
-        );
-        renderCalendarFromWorkingCourses();
-      }
-      renderSavedList();
-      $("statusBar").textContent = plan.name + " deleted.";
+      if (activeScheduleKey === key) { activeScheduleKey = "registered"; workingCourses = workingCourses.filter((c) => c.source === "registered"); renderCalendarFromWorkingCourses(); }
+      renderSavedList(); $("statusBar").textContent = plan.name + " deleted.";
       setTimeout(() => loadBannerPlans(currentTerm), 1500);
     });
-
     item.addEventListener("click", async (e) => {
       if (e.target.classList.contains("delete-btn")) return;
-      const viewGen = bumpScheduleViewGeneration();
-      activeScheduleKey = key;
-      renderSavedList();
-
+      const viewGen = bumpScheduleViewGeneration(); activeScheduleKey = key; renderSavedList();
       try {
-        // Fetch events if not cached yet (keep calendar as-is until data arrives)
-        if (!plan.events || plan.events.length === 0) {
+        if (!plan.events || !plan.events.length) {
           $("statusBar").textContent = "Loading " + plan.name + "…";
-          const events = await sendToBackground({
-            action: "fetchPlanCalendar",
-            term: currentTerm,
-            planCourses: plan.planCourses || [],
-          });
+          const events = await sendToBackground({ action: "fetchPlanCalendar", term: currentTerm, planCourses: plan.planCourses || [] });
           if (viewGen !== scheduleViewGeneration) return;
           plan.events = events || [];
-          if (!plan.events.length) {
-            buildEmptyCalendar();
-            $("statusBar").textContent = plan.name + ": no meeting times found.";
-            return;
-          }
+          if (!plan.events.length) { buildEmptyCalendar(); $("statusBar").textContent = plan.name + ": no meeting times found."; return; }
         }
-
         if (viewGen !== scheduleViewGeneration) return;
-
         const planCourses = plan.events.reduce((acc, event) => {
           const crn = String(event.crn || "");
           const existing = acc.find((c) => c.crn === crn);
           const dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri"];
-          const start = new Date(event.start);
-          const dayIdx = start.getDay() - 1;
+          const start = new Date(event.start), dayIdx = start.getDay() - 1;
           const day = dayIdx >= 0 && dayIdx <= 4 ? dayNames[dayIdx] : null;
-          const bh = start.getHours(),
-            bm = start.getMinutes();
-          const end = new Date(event.end);
-          const eh = end.getHours(),
-            em = end.getMinutes();
-          if (existing) {
-            if (day && !existing.days.includes(day)) existing.days.push(day);
-          } else {
-            acc.push({
-              crn,
-              subject: event.subject || "",
-              courseNumber: event.courseNumber || "",
-              title: event.title || "",
-              days: day ? [day] : [],
-              beginTime:
-                String(bh).padStart(2, "0") + ":" + String(bm).padStart(2, "0"),
-              endTime:
-                String(eh).padStart(2, "0") + ":" + String(em).padStart(2, "0"),
-              source: "banner",
-              online: false,
-            });
-          }
+          const bh = start.getHours(), bm = start.getMinutes();
+          const end = new Date(event.end), eh = end.getHours(), em = end.getMinutes();
+          if (existing) { if (day && !existing.days.includes(day)) existing.days.push(day); }
+          else acc.push({ crn, subject: event.subject || "", courseNumber: event.courseNumber || "", title: event.title || "", days: day ? [day] : [], beginTime: String(bh).padStart(2,"0") + ":" + String(bm).padStart(2,"0"), endTime: String(eh).padStart(2,"0") + ":" + String(em).padStart(2,"0"), source: "banner", online: false });
           return acc;
         }, []);
-
         if (viewGen !== scheduleViewGeneration) return;
-
-        workingCourses = planCourses;
-        lockedCrns = new Set();
-
-        renderCalendarFromWorkingCourses();
-        updateWeekHours(plan.events);
+        workingCourses = planCourses; lockedCrns = new Set();
+        renderCalendarFromWorkingCourses(); updateWeekHours(plan.events);
         $("statusBar").textContent = "Viewing: " + plan.name;
-      } catch (err) {
-        console.error("[BobcatPlus] banner plan load:", err);
-        if (viewGen === scheduleViewGeneration) {
-          $("statusBar").textContent = "Could not load plan. Try again.";
-        }
-      }
+      } catch (err) { console.error("[BobcatPlus] banner plan load:", err); if (viewGen === scheduleViewGeneration) $("statusBar").textContent = "Could not load plan. Try again."; }
     });
-
     list.appendChild(item);
   });
 
-  // ── New Plan — always last ──
+  // + New Plan — always last
   const newPlanItem = document.createElement("div");
-  newPlanItem.className =
-    "saved-item saved-item-new-plan" +
-    (activeScheduleKey === "new" ? " active" : "");
+  newPlanItem.className = "saved-item saved-item-new-plan" + (activeScheduleKey === "new" ? " active" : "");
   newPlanItem.dataset.planName = newPlanDisplayName;
-
   const newPlanSpan = document.createElement("span");
   newPlanSpan.className = "new-plan-label";
   newPlanSpan.textContent = newPlanDisplayName || "New Plan";
   newPlanItem.appendChild(newPlanSpan);
-
   newPlanItem.addEventListener("click", (e) => {
     if (e.target.tagName === "INPUT") return;
-    if (newPlanSingleClickOpensEdit) {
-      enterNewPlanEditMode();
-      return;
-    }
+    if (newPlanSingleClickOpensEdit) { enterNewPlanEditMode(); return; }
     clearTimeout(newPlanClickTimer);
-    newPlanClickTimer = setTimeout(() => {
-      newPlanClickTimer = null;
-      activateNewPlanRow();
-    }, 280);
+    newPlanClickTimer = setTimeout(() => { newPlanClickTimer = null; activateNewPlanRow(); }, 280);
   });
-  newPlanItem.addEventListener("dblclick", (e) => {
-    if (e.target.tagName === "INPUT") return;
-    e.preventDefault();
-    clearTimeout(newPlanClickTimer);
-    newPlanClickTimer = null;
-    enterNewPlanEditMode();
-  });
-
+  newPlanItem.addEventListener("dblclick", (e) => { if (e.target.tagName === "INPUT") return; e.preventDefault(); clearTimeout(newPlanClickTimer); newPlanClickTimer = null; enterNewPlanEditMode(); });
   list.appendChild(newPlanItem);
 
-  // Wire delete buttons for local saved schedules
   list.querySelectorAll(".delete-btn:not(.txst-delete)").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
       const idx = parseInt(btn.dataset.idx);
-      savedSchedules.splice(idx, 1);
-      chrome.storage.local.set({ savedSchedules });
-      if (activeScheduleKey === btn.dataset.key) {
-        activeScheduleKey = "registered";
-        workingCourses = workingCourses.filter(
-          (c) => c.source === "registered",
-        );
-        renderCalendarFromWorkingCourses();
-      }
+      savedSchedules.splice(idx, 1); chrome.storage.local.set({ savedSchedules });
+      if (activeScheduleKey === btn.dataset.key) { activeScheduleKey = "registered"; workingCourses = workingCourses.filter((c) => c.source === "registered"); renderCalendarFromWorkingCourses(); }
       renderSavedList();
     });
   });
 }
 
 function renderSavedScheduleOnCalendar(schedule) {
-  const fromSaved = (schedule.courses || []).map((c) => ({
-    ...c,
-    crn: String(c.crn ?? ""),
-    source: "saved",
-  }));
+  const fromSaved = (schedule.courses || []).map((c) => ({ ...c, crn: String(c.crn ?? ""), source: "saved" }));
   lockedCrns = new Set();
-  workingCourses = [
-    ...workingCourses.filter((c) => c.source === "registered"),
-    ...fromSaved.filter(
-      (c) => !workingCourses.some((w) => String(w.crn) === c.crn),
-    ),
-  ];
-  renderCalendarFromWorkingCourses();
-  updateSaveBtn();
+  workingCourses = [...workingCourses.filter((c) => c.source === "registered"), ...fromSaved.filter((c) => !workingCourses.some((w) => String(w.crn) === c.crn))];
+  renderCalendarFromWorkingCourses(); updateSaveBtn();
   $("statusBar").textContent = "Viewing: " + schedule.name;
 }
 
@@ -1926,306 +1055,109 @@ function renderSavedScheduleOnCalendar(schedule) {
 // ============================================================
 
 $("chatSend").addEventListener("click", sendChat);
-$("chatInput").addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    sendChat();
-  }
-});
+$("chatInput").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); } });
 
 async function sendChat() {
   const input = $("chatInput").value.trim();
   if (!input) return;
-
-  // Auto-switch to AI mode if user types in chat while in Build mode
   if (panelMode !== "ai") setPanelMode("ai");
-
   addMessage("user", input);
   $("chatInput").value = "";
 
   if (!analysisResults) {
-    addMessage(
-      "system",
-      "Analyzing your degree audit and finding eligible courses. This may take a minute...",
-    );
+    addMessage("system", "Analyzing your degree audit and finding eligible courses. This may take a minute...");
     $("statusBar").textContent = "Running analysis...";
     analysisResults = await runAnalysisAndWait();
-    if (analysisResults._skippedStaleTerm) {
-      addMessage(
-        "system",
-        "The term changed while loading. Send your message again.",
-      );
-      $("statusBar").textContent = "";
-      return;
-    }
-    cachedRawData = analysisResults;
-    eligibleCourses = analysisResults.eligible || [];
-    if (!analysisResults.eligible || analysisResults.eligible.length === 0) {
-      addMessage("system", "No eligible courses found for this term.");
-      $("statusBar").textContent = "No eligible courses found";
-      return;
-    }
-    addMessage(
-      "system",
-      `Found ${analysisResults.eligible.length} eligible courses. Sending to AI...`,
-    );
+    if (analysisResults._skippedStaleTerm) { addMessage("system", "The term changed while loading. Send your message again."); $("statusBar").textContent = ""; return; }
+    cachedRawData = analysisResults; eligibleCourses = analysisResults.eligible || [];
+    if (!analysisResults.eligible || !analysisResults.eligible.length) { addMessage("system", "No eligible courses found for this term."); $("statusBar").textContent = "No eligible courses found"; return; }
+    addMessage("system", `Found ${analysisResults.eligible.length} eligible courses. Sending to AI...`);
   }
 
   const { openaiKey } = await chrome.storage.local.get("openaiKey");
-  if (!openaiKey) {
-    addMessage(
-      "system",
-      'No OpenAI API key found. Run this once in your browser console:\n\nchrome.storage.local.set({ openaiKey: "sk-..." })',
-    );
-    return;
-  }
+  if (!openaiKey) { addMessage("system", 'No OpenAI API key found. Run this once in your browser console:\n\nchrome.storage.local.set({ openaiKey: "sk-..." })'); return; }
 
   $("statusBar").textContent = "Thinking...";
-
   try {
     const isFirstTurn = conversationHistory.length === 0;
     let userMessage;
-
     if (isFirstTurn) {
       const compressed = compressForLLM(cachedRawData);
       const lockedList = getLockedForLLM();
-
-      // Pre-filter removes sections conflicting with locked courses
       const preFiltered = applyPreFilter(compressed, lockedList);
-
-      const lockedBlock =
-        lockedList.length > 0
-          ? `ALREADY LOCKED (treat as fixed — build around these, never conflict with them):\n${JSON.stringify(lockedList)}\n\n`
-          : "";
-
-      console.log(
-        "[BobcatPlus] Locked courses:",
-        lockedList.length,
-        "| Eligible after filter:",
-        preFiltered.eligible
-          .map((c) => c.course + "(" + c.sections.length + ")")
-          .join(", "),
-      );
-
+      const lockedBlock = lockedList.length > 0 ? `ALREADY LOCKED (treat as fixed — build around these, never conflict with them):\n${JSON.stringify(lockedList)}\n\n` : "";
       userMessage = `${lockedBlock}ELIGIBLE COURSES TO SCHEDULE:\n${JSON.stringify(preFiltered)}\n\nMy preferences: ${input}`;
     } else {
-      // On subsequent turns, re-inject locked courses so the AI stays aware
       const lockedList = getLockedForLLM();
-      const lockedNote =
-        lockedList.length > 0
-          ? `[Still locked: ${lockedList.map((c) => c.course + " CRN " + c.crn).join(", ")}]\n\n`
-          : "";
+      const lockedNote = lockedList.length > 0 ? `[Still locked: ${lockedList.map((c) => c.course + " CRN " + c.crn).join(", ")}]\n\n` : "";
       userMessage = lockedNote + input;
     }
-
     conversationHistory.push({ role: "user", content: userMessage });
 
-    let validSchedules = [],
-      attempts = 0;
+    let validSchedules = [], attempts = 0;
     const MAX_ATTEMPTS = 3;
     let lastConflictDetails = [];
 
     while (validSchedules.length === 0 && attempts < MAX_ATTEMPTS) {
       attempts++;
       if (attempts > 1) {
-        const conflictDetails = lastConflictDetails
-          .map(
-            (d) =>
-              `"${d.name}": ${d.course1} (${d.days1} ${d.start1}-${d.end1}) conflicts with ${d.course2} (${d.days2} ${d.start2}-${d.end2})`,
-          )
-          .join("; ");
-        conversationHistory.push({
-          role: "user",
-          content: `Your previous schedules had time conflicts. Regenerate all 3 fixing: ${conflictDetails}. Double-check every pair of in-person sections that share any day.`,
-        });
-        $("statusBar").textContent =
-          `Fixing conflicts (attempt ${attempts})...`;
+        const conflictDetails = lastConflictDetails.map((d) => `"${d.name}": ${d.course1} (${d.days1} ${d.start1}-${d.end1}) conflicts with ${d.course2} (${d.days2} ${d.start2}-${d.end2})`).join("; ");
+        conversationHistory.push({ role: "user", content: `Your previous schedules had time conflicts. Regenerate all 3 fixing: ${conflictDetails}. Double-check every pair of in-person sections that share any day.` });
+        $("statusBar").textContent = `Fixing conflicts (attempt ${attempts})...`;
       }
-
-      const response = await fetch(
-        "https://api.openai.com/v1/chat/completions",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${openaiKey}`,
-          },
-          body: JSON.stringify({
-            model: "gpt-4o",
-            response_format: { type: "json_object" },
-            messages: [
-              { role: "system", content: SCHEDULE_SYSTEM_PROMPT },
-              ...conversationHistory,
-            ],
-          }),
-        },
-      );
-
+      const response = await fetch("https://api.openai.com/v1/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${openaiKey}` }, body: JSON.stringify({ model: "gpt-4o", response_format: { type: "json_object" }, messages: [{ role: "system", content: SCHEDULE_SYSTEM_PROMPT }, ...conversationHistory] }) });
       const data = await response.json();
       if (data.error) throw new Error(data.error.message);
       const result = JSON.parse(data.choices[0].message.content);
-      conversationHistory.push({
-        role: "assistant",
-        content: data.choices[0].message.content,
-      });
+      conversationHistory.push({ role: "assistant", content: data.choices[0].message.content });
 
-      const conflicted = [];
-      lastConflictDetails = [];
+      const conflicted = []; lastConflictDetails = [];
       for (const schedule of result.schedules) {
         const conflict = findFirstConflict(schedule.courses);
-        if (conflict) {
-          conflicted.push(schedule.name);
-          lastConflictDetails.push({
-            name: schedule.name,
-            course1: conflict.a.course,
-            days1: conflict.a.days?.join("/"),
-            start1: conflict.a.start,
-            end1: conflict.a.end,
-            course2: conflict.b.course,
-            days2: conflict.b.days?.join("/"),
-            start2: conflict.b.start,
-            end2: conflict.b.end,
-          });
-        } else {
-          validSchedules.push(schedule);
-        }
+        if (conflict) { conflicted.push(schedule.name); lastConflictDetails.push({ name: schedule.name, course1: conflict.a.course, days1: conflict.a.days?.join("/"), start1: conflict.a.start, end1: conflict.a.end, course2: conflict.b.course, days2: conflict.b.days?.join("/"), start2: conflict.b.start, end2: conflict.b.end }); }
+        else validSchedules.push(schedule);
       }
-
-      if (
-        conflicted.length > 0 &&
-        validSchedules.length === 0 &&
-        attempts < MAX_ATTEMPTS
-      ) {
-        $("statusBar").textContent = "Conflicts found, retrying...";
-        continue;
-      }
-      if (conflicted.length > 0)
-        addMessage(
-          "system",
-          `⚠️ ${conflicted.join(", ")} had time conflicts and were removed. Showing ${validSchedules.length} valid schedule(s).`,
-        );
+      if (conflicted.length > 0 && validSchedules.length === 0 && attempts < MAX_ATTEMPTS) { $("statusBar").textContent = "Conflicts found, retrying..."; continue; }
+      if (conflicted.length > 0) addMessage("system", `⚠️ ${conflicted.join(", ")} had time conflicts and were removed. Showing ${validSchedules.length} valid schedule(s).`);
       validSchedules.forEach((s) => addScheduleOption(s));
-      if (validSchedules.length === 0)
-        addMessage(
-          "system",
-          "Could not generate conflict-free schedules. Try simplifying your preferences.",
-        );
-      if (result.followUpQuestion && validSchedules.length > 0)
-        addMessage("ai", result.followUpQuestion);
+      if (validSchedules.length === 0) addMessage("system", "Could not generate conflict-free schedules. Try simplifying your preferences.");
+      if (result.followUpQuestion && validSchedules.length > 0) addMessage("ai", result.followUpQuestion);
       break;
     }
-
     $("statusBar").textContent = "Ready";
-  } catch (err) {
-    console.error(err);
-    addMessage("system", "Something went wrong: " + err.message);
-    $("statusBar").textContent = "Error";
-  }
+  } catch (err) { console.error(err); addMessage("system", "Something went wrong: " + err.message); $("statusBar").textContent = "Error"; }
 }
 
 function addScheduleOption(schedule) {
   const { name, rationale, totalCredits, courses } = schedule;
   const lockedList = getLockedForLLM();
-
-  const lockedLines = lockedList
-    .map((r) => {
-      const time = r.days?.length
-        ? r.days.join("/") +
-          " " +
-          formatChatTime(r.start) +
-          "–" +
-          formatChatTime(r.end)
-        : "Online";
-      return (
-        '<div style="margin:4px 0;opacity:0.6;border-left:2px solid var(--border);padding-left:6px"><strong>' +
-        r.course +
-        "</strong> — " +
-        (r.title || "") +
-        '<br><span style="font-size:11px">Locked · ' +
-        time +
-        "</span></div>"
-      );
-    })
-    .join("");
-
-  const courseLines = courses
-    .map((c) => {
-      const time = c.online
-        ? "Online"
-        : c.days?.join("/") +
-          " " +
-          formatChatTime(c.start) +
-          "–" +
-          formatChatTime(c.end);
-      return (
-        '<div style="margin:4px 0"><strong>' +
-        c.course +
-        "</strong> — " +
-        c.title +
-        '<br><span style="font-size:11px;opacity:0.8">CRN: ' +
-        c.crn +
-        " · " +
-        time +
-        " · " +
-        c.requirementSatisfied +
-        "</span></div>"
-      );
-    })
-    .join("");
-
+  const lockedLines = lockedList.map((r) => { const time = r.days?.length ? r.days.join("/") + " " + formatChatTime(r.start) + "–" + formatChatTime(r.end) : "Online"; return '<div style="margin:4px 0;opacity:0.6;border-left:2px solid var(--border);padding-left:6px"><strong>' + r.course + "</strong> — " + (r.title || "") + '<br><span style="font-size:11px">Locked · ' + time + "</span></div>"; }).join("");
+  const courseLines = courses.map((c) => { const time = c.online ? "Online" : (c.days?.join("/") + " " + formatChatTime(c.start) + "–" + formatChatTime(c.end)); return '<div style="margin:4px 0"><strong>' + c.course + "</strong> — " + c.title + '<br><span style="font-size:11px;opacity:0.8">CRN: ' + c.crn + " · " + time + " · " + c.requirementSatisfied + "</span></div>"; }).join("");
   const div = document.createElement("div");
   div.className = "chat-message ai";
-  div.innerHTML =
-    '<div class="sender">' +
-    name +
-    " · " +
-    totalCredits +
-    " credits</div>" +
-    '<div style="font-size:11px;margin-bottom:8px;opacity:0.85">' +
-    rationale +
-    "</div>" +
-    lockedLines +
-    courseLines +
-    "<br>" +
-    '<button class="save-schedule-btn add-to-calendar-btn">Add to Calendar</button>' +
-    '<button class="save-schedule-btn lock-all-btn" style="margin-left:6px">Lock All</button>';
-
-  // Add to Calendar — merges AI courses into workingCourses
+  div.innerHTML = '<div class="sender">' + name + " · " + totalCredits + " credits</div>" + '<div style="font-size:11px;margin-bottom:8px;opacity:0.85">' + rationale + "</div>" + lockedLines + courseLines + "<br>" + '<button class="save-schedule-btn add-to-calendar-btn">Add to Calendar</button>' + '<button class="save-schedule-btn lock-all-btn" style="margin-left:6px">Lock All</button>';
   div.querySelector(".add-to-calendar-btn").addEventListener("click", () => {
     for (const c of courses) {
-      addToWorkingSchedule({
-        crn: c.crn,
-        subject: c.course.split(" ")[0],
-        courseNumber: c.course.split(" ")[1],
-        title: c.title,
-        days: c.days || [],
-        beginTime: c.start
-          ? c.start.slice(0, 2) + ":" + c.start.slice(2)
-          : null,
-        endTime: c.end ? c.end.slice(0, 2) + ":" + c.end.slice(2) : null,
-        source: "ai",
-        online: c.online || false,
-      });
+      addToWorkingSchedule({ crn: c.crn, subject: c.course.split(" ")[0], courseNumber: c.course.split(" ")[1], title: c.title, days: c.days || [], beginTime: c.start ? c.start.slice(0, 2) + ":" + c.start.slice(2) : null, endTime: c.end ? c.end.slice(0, 2) + ":" + c.end.slice(2) : null, source: "ai", online: c.online || false });
     }
-    addMessage(
-      "system",
-      name +
-        " added to calendar. Switch to Build mode to lock, remove, or modify individual courses.",
-    );
+    addMessage("system", name + " added to calendar. Switch to Build mode to lock, remove, or modify courses.");
     updateSaveBtn();
   });
-
-  // Lock All — locks every course in this schedule
   div.querySelector(".lock-all-btn").addEventListener("click", () => {
-    for (const c of courses) {
-      lockedCrns.add(String(c.crn));
-    }
+    for (const c of courses) lockedCrns.add(c.crn);
     renderCalendarFromWorkingCourses();
     addMessage("system", "All courses in " + name + " locked.");
   });
-
   $("chatMessages").appendChild(div);
   $("chatMessages").scrollTop = $("chatMessages").scrollHeight;
+}
+
+// ============================================================
+// LOCKED COURSES → LLM
+// ============================================================
+
+function getLockedForLLM() {
+  return workingCourses.filter((c) => lockedCrns.has(String(c.crn))).map((c) => ({ crn: c.crn, course: c.subject + " " + c.courseNumber, title: c.title || "", days: c.days || [], start: c.beginTime ? c.beginTime.replace(":", "") : null, end: c.endTime ? c.endTime.replace(":", "") : null }));
 }
 
 // ============================================================
@@ -2233,64 +1165,17 @@ function addScheduleOption(schedule) {
 // ============================================================
 
 function runAnalysisAndWait() {
-  const seq = ++eligibleAnalysisSeq;
+  const termAtStart = currentTerm;
   return new Promise((resolve) => {
     const results = { eligible: [], blocked: [], notOffered: [], needed: [] };
     const listener = (message) => {
-      if (message.analysisGen !== seq) return;
-      if (message.type === "status")
-        $("statusBar").textContent = message.message;
+      if (currentTerm !== termAtStart) { chrome.runtime.onMessage.removeListener(listener); resolve({ eligible: [], blocked: [], notOffered: [], needed: [], _skippedStaleTerm: true }); return; }
+      if (message.type === "status") $("statusBar").textContent = message.message;
       if (message.type === "eligible") results.eligible.push(message.data);
-      if (message.type === "blocked") results.blocked.push(message.data);
-      if (message.type === "done") {
-        const doneTerm =
-          message.data && message.data.termCode != null
-            ? String(message.data.termCode)
-            : null;
-        if (doneTerm != null && doneTerm !== String(currentTerm)) {
-          chrome.runtime.onMessage.removeListener(listener);
-          resolve({
-            eligible: [],
-            blocked: [],
-            notOffered: [],
-            needed: [],
-            _skippedStaleTerm: true,
-          });
-          return;
-        }
-        chrome.runtime.onMessage.removeListener(listener);
-        results.notOffered = message.data.notOffered;
-        results.needed = message.data.needed;
-        // #region agent log
-        fetch("http://127.0.0.1:7590/ingest/2a571ae1-604a-4281-a7bb-8aa23a705774", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Debug-Session-Id": "33925b",
-          },
-          body: JSON.stringify({
-            sessionId: "33925b",
-            location: "tab.js:runAnalysisAndWait:done",
-            message: "analysis done",
-            data: {
-              seq,
-              termCode: message.data && message.data.termCode,
-              eligibleN: (results.eligible || []).length,
-            },
-            timestamp: Date.now(),
-            hypothesisId: "H-eligible-seq",
-          }),
-        }).catch(() => {});
-        // #endregion
-        resolve(results);
-      }
+      if (message.type === "done") { chrome.runtime.onMessage.removeListener(listener); results.notOffered = message.data.notOffered; results.needed = message.data.needed; resolve(results); }
     };
     chrome.runtime.onMessage.addListener(listener);
-    chrome.runtime.sendMessage({
-      action: "runAnalysis",
-      term: currentTerm,
-      analysisGen: seq,
-    });
+    chrome.runtime.sendMessage({ action: "runAnalysis", term: currentTerm });
   });
 }
 
@@ -2301,181 +1186,66 @@ function runAnalysisAndWait() {
 function addMessage(type, text) {
   const div = document.createElement("div");
   div.className = "chat-message " + type;
-  const sender =
-    type === "user" ? "You" : type === "ai" ? "Bobcat Plus" : "System";
-  div.innerHTML =
-    '<div class="sender">' + sender + "</div>" + text.replace(/\n/g, "<br>");
+  const sender = type === "user" ? "You" : type === "ai" ? "Bobcat Plus" : "System";
+  div.innerHTML = '<div class="sender">' + sender + "</div>" + text.replace(/\n/g, "<br>");
   $("chatMessages").appendChild(div);
   $("chatMessages").scrollTop = $("chatMessages").scrollHeight;
 }
-
-function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-function removeExistingScheduleRefreshPrompts() {
-  document
-    .querySelectorAll("[data-schedule-refresh-prompt]")
-    .forEach((el) => el.remove());
-}
-
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+function removeExistingScheduleRefreshPrompts() { document.querySelectorAll("[data-schedule-refresh-prompt]").forEach((el) => el.remove()); }
 function createCountdownSystemMessage() {
-  const div = document.createElement("div");
-  div.className = "chat-message system";
-  div.innerHTML =
-    '<div class="sender">System</div><div class="countdown-body"></div>';
-  $("chatMessages").appendChild(div);
-  $("chatMessages").scrollTop = $("chatMessages").scrollHeight;
+  const div = document.createElement("div"); div.className = "chat-message system";
+  div.innerHTML = '<div class="sender">System</div><div class="countdown-body"></div>';
+  $("chatMessages").appendChild(div); $("chatMessages").scrollTop = $("chatMessages").scrollHeight;
   const body = div.querySelector(".countdown-body");
-  return {
-    setHtml(html) {
-      body.innerHTML = html;
-      $("chatMessages").scrollTop = $("chatMessages").scrollHeight;
-    },
-    remove() {
-      div.remove();
-    },
-  };
+  return { setHtml(html) { body.innerHTML = html; $("chatMessages").scrollTop = $("chatMessages").scrollHeight; }, remove() { div.remove(); } };
 }
-
 async function waitWithChatCountdown(totalSeconds) {
   const msg = createCountdownSystemMessage();
-  for (let i = totalSeconds; i >= 1; i--) {
-    msg.setHtml(
-      "Waiting for your TXST session to settle… <strong>" + i + "</strong>s",
-    );
-    await sleep(1000);
-  }
+  for (let i = totalSeconds; i >= 1; i--) { msg.setHtml("Waiting for your TXST session to settle… <strong>" + i + "</strong>s"); await sleep(1000); }
   msg.remove();
 }
-
 function addScheduleRefreshPrompt() {
   removeExistingScheduleRefreshPrompts();
-  const div = document.createElement("div");
-  div.className = "chat-message system";
-  div.setAttribute("data-schedule-refresh-prompt", "1");
-  div.innerHTML =
-    '<div class="sender">System</div><div>Schedule didn\u2019t load. Click Refresh to retry.</div><button type="button" class="save-schedule-btn">Refresh</button>';
+  const div = document.createElement("div"); div.className = "chat-message system"; div.setAttribute("data-schedule-refresh-prompt", "1");
+  div.innerHTML = '<div class="sender">System</div><div>Schedule didn\u2019t load. Click Refresh to retry.</div><button type="button" class="save-schedule-btn">Refresh</button>';
   const btn = div.querySelector("button");
-  btn.addEventListener("click", async () => {
-    btn.disabled = true;
-    btn.textContent = "Loading…";
-    await loadSchedule(currentTerm);
-    btn.textContent = "Refresh";
-    btn.disabled = false;
-    if (registeredFetchOk) {
-      div.remove();
-      addMessage("system", "Schedule loaded.");
-    }
-  });
-  $("chatMessages").appendChild(div);
-  $("chatMessages").scrollTop = $("chatMessages").scrollHeight;
+  btn.addEventListener("click", async () => { btn.disabled = true; btn.textContent = "Loading…"; await loadSchedule(currentTerm); btn.textContent = "Refresh"; btn.disabled = false; if (registeredFetchOk) { div.remove(); addMessage("system", "Schedule loaded."); } });
+  $("chatMessages").appendChild(div); $("chatMessages").scrollTop = $("chatMessages").scrollHeight;
 }
 
 function applyStudentInfoToUI(student) {
   if (!student) return;
   currentStudent = student;
-  $("studentName").textContent =
-    student.name + " | " + student.major + " | " + student.degree;
+  $("studentName").textContent = student.name + " | " + student.major + " | " + student.degree;
   const ss = document.getElementById("sidebarStudent");
-  if (ss)
-    ss.innerHTML =
-      "<strong>" +
-      student.name +
-      "</strong><br>" +
-      student.major +
-      " | " +
-      student.degree;
-}
-
-// ============================================================
-// COURSE COLOR SYSTEM
-// ============================================================
-const TXST_CHIPS = [
-  "chip-0",
-  "chip-1",
-  "chip-2",
-  "chip-3",
-  "chip-4",
-  "chip-5",
-  "chip-6",
-  "chip-7",
-];
-function getCourseColors() {
-  try {
-    return JSON.parse(localStorage.getItem("bobcat_course_colors") || "{}");
-  } catch (e) {
-    return {};
-  }
-}
-function saveCourseColors(map) {
-  try {
-    localStorage.setItem("bobcat_course_colors", JSON.stringify(map));
-  } catch (e) {}
-}
-function getChipForCourse(courseKey) {
-  const map = getCourseColors();
-  if (!map[courseKey]) {
-    const used = Object.values(map);
-    const available = TXST_CHIPS.filter((c) => !used.includes(c));
-    const pool = available.length > 0 ? available : TXST_CHIPS;
-    map[courseKey] = pool[Math.floor(Math.random() * pool.length)];
-    saveCourseColors(map);
-  }
-  return map[courseKey];
+  if (ss) ss.innerHTML = "<strong>" + student.name + "</strong><br>" + student.major + " | " + student.degree;
 }
 
 // ============================================================
 // WEEK HOURS + OVERVIEW
 // ============================================================
 function updateWeekHours(events) {
-  const seen = new Set();
-  let totalHours = 0;
-  for (const ev of events) {
-    if (!ev.crn || seen.has(ev.crn)) continue;
-    seen.add(ev.crn);
-    totalHours += ev.creditHours || ev.credits || 3;
-  }
+  const seen = new Set(); let totalHours = 0;
+  for (const ev of events) { if (!ev.crn || seen.has(ev.crn)) continue; seen.add(ev.crn); totalHours += ev.creditHours || ev.credits || 3; }
   const el = document.getElementById("weekHours");
-  if (el && totalHours > 0)
-    el.innerHTML =
-      "<strong>" + totalHours + " credit hours</strong> this semester";
+  if (el && totalHours > 0) el.innerHTML = "<strong>" + totalHours + " credit hours</strong> this semester";
 }
-
 function updateOverviewFromEvents(events) {
-  const seen = new Set(),
-    courses = [],
-    waitlisted = [];
-  for (const ev of events) {
-    if (seen.has(ev.crn)) continue;
-    seen.add(ev.crn);
-    if (
-      ev.registrationStatus &&
-      ev.registrationStatus.toLowerCase().includes("wait")
-    )
-      waitlisted.push(ev);
-    else courses.push(ev);
-  }
+  const seen = new Set(), courses = [], waitlisted = [];
+  for (const ev of events) { if (seen.has(ev.crn)) continue; seen.add(ev.crn); if (ev.registrationStatus && ev.registrationStatus.toLowerCase().includes("wait")) waitlisted.push(ev); else courses.push(ev); }
   const totalCourses = courses.length + waitlisted.length;
-  const totalHours = [...courses, ...waitlisted].reduce(
-    (sum, c) => sum + (c.creditHours || c.credits || 3),
-    0,
-  );
+  const totalHours = [...courses, ...waitlisted].reduce((sum, c) => sum + (c.creditHours || c.credits || 3), 0);
   let onTrackLabel = "";
-  if (totalHours >= 15)
-    onTrackLabel = '<span class="ov-badge ov-green">Ahead of pace</span>';
-  else if (totalHours >= 12)
-    onTrackLabel = '<span class="ov-badge ov-blue">On track</span>';
-  else if (totalHours > 0)
-    onTrackLabel = '<span class="ov-badge ov-amber">Light semester</span>';
+  if (totalHours >= 15) onTrackLabel = '<span class="ov-badge ov-green">Ahead of pace</span>';
+  else if (totalHours >= 12) onTrackLabel = '<span class="ov-badge ov-blue">On track</span>';
+  else if (totalHours > 0) onTrackLabel = '<span class="ov-badge ov-amber">Light semester</span>';
   const panel = document.getElementById("overviewPanel");
   if (!panel) return;
   panel.innerHTML = `<div class="ov-row"><div class="ov-stat"><div class="ov-val">${totalCourses}</div><div class="ov-label">Courses registered</div><div class="ov-sub">${totalHours} credit hours ${onTrackLabel}</div></div>${waitlisted.length > 0 ? `<div class="ov-stat"><div class="ov-val ov-red">${waitlisted.length}</div><div class="ov-label">Waitlisted</div></div>` : ""}</div><div class="ov-divider"></div><div class="ov-row"><div class="ov-stat" style="width:100%"><div class="ov-sub" style="font-size:11px;color:var(--text3)">GPA & credits load after degree audit runs</div></div></div>`;
 }
-
 function toggleOverview() {
-  const body = document.getElementById("overviewPanel");
-  const chevron = document.getElementById("overviewChevron");
+  const body = document.getElementById("overviewPanel"), chevron = document.getElementById("overviewChevron");
   if (!body || !chevron) return;
   const collapsed = body.style.display === "none";
   body.style.display = collapsed ? "block" : "none";
@@ -2483,90 +1253,148 @@ function toggleOverview() {
 }
 
 // ============================================================
+// CONFLICT DETECTION
+// ============================================================
+function timeStrToMinutes(t) { if (!t) return null; return parseInt(t.slice(0, 2)) * 60 + parseInt(t.slice(2)); }
+function formatTime24to12(h, m) { const ampm = h >= 12 ? "PM" : "AM"; const h12 = h > 12 ? h - 12 : h === 0 ? 12 : h; return h12 + ":" + String(m).padStart(2, "0") + " " + ampm; }
+function formatChatTime(t) { if (!t) return ""; return formatTime24to12(parseInt(t.slice(0, 2)), parseInt(t.slice(2))); }
+function sectionsConflict(a, b) {
+  if (!a.days || !b.days || !a.start || !b.start) return false;
+  const sharedDays = a.days.filter((d) => b.days.includes(d));
+  if (!sharedDays.length) return false;
+  return timeStrToMinutes(a.start) < timeStrToMinutes(b.end) && timeStrToMinutes(b.start) < timeStrToMinutes(a.end);
+}
+function findFirstConflict(courses) {
+  for (let i = 0; i < courses.length; i++) for (let j = i + 1; j < courses.length; j++) if (sectionsConflict(courses[i], courses[j])) return { a: courses[i], b: courses[j] };
+  const lockedList = getLockedForLLM();
+  for (const proposed of courses) {
+    if (lockedList.some((r) => r.crn === proposed.crn)) continue;
+    for (const locked of lockedList) if (sectionsConflict(proposed, locked)) return { a: proposed, b: { ...locked, course: locked.course + " (locked)" } };
+  }
+  return null;
+}
+
+// ============================================================
 // SIDEBAR + EVENT WIRING
 // ============================================================
 document.addEventListener("DOMContentLoaded", () => {
-  const hamburger = document.getElementById("hamburgerBtn");
-  const sidebar = document.getElementById("sidebar");
-  const overlay = document.getElementById("sidebarOverlay");
-  const closeBtn = document.getElementById("sidebarClose");
-
-  function openSidebar() {
-    if (sidebar) sidebar.classList.add("open");
-    if (overlay) overlay.classList.add("active");
-  }
-  function closeSidebar() {
-    if (sidebar) sidebar.classList.remove("open");
-    if (overlay) overlay.classList.remove("active");
-  }
-
+  const hamburger = document.getElementById("hamburgerBtn"), sidebar = document.getElementById("sidebar"), overlay = document.getElementById("sidebarOverlay"), closeBtn = document.getElementById("sidebarClose");
+  const openSidebar = () => { if (sidebar) sidebar.classList.add("open"); if (overlay) overlay.classList.add("active"); };
+  const closeSidebar = () => { if (sidebar) sidebar.classList.remove("open"); if (overlay) overlay.classList.remove("active"); };
   if (hamburger) hamburger.addEventListener("click", openSidebar);
   if (closeBtn) closeBtn.addEventListener("click", closeSidebar);
   if (overlay) overlay.addEventListener("click", closeSidebar);
-
-  const navRegister = document.getElementById("navRegister");
-  const navAudit = document.getElementById("navAudit");
-  if (navRegister)
-    navRegister.addEventListener("click", (e) => {
-      e.preventDefault();
-      chrome.tabs.create({
-        url: "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/classRegistration",
-      });
-      closeSidebar();
-    });
-  if (navAudit)
-    navAudit.addEventListener("click", (e) => {
-      e.preventDefault();
-      chrome.tabs.create({
-        url: "https://dw-prod.ec.txstate.edu/responsiveDashboard/worksheets/WEB31",
-      });
-      closeSidebar();
-    });
-
-  const toggle = document.getElementById("overviewToggle");
-  if (toggle) toggle.addEventListener("click", toggleOverview);
-
-  // viewRegistered — reset to registered-only view
-  const viewRegistered = document.getElementById("viewRegistered");
-  if (viewRegistered) {
-    viewRegistered.addEventListener("click", async () => {
-      workingCourses = workingCourses.filter((c) => c.source === "registered");
-      renderCalendarFromWorkingCourses();
-      renderSavedList();
-      if (await checkAuth()) await loadSchedule(currentTerm);
-      else
-        $("statusBar").textContent =
-          "Use Import Schedule to sign in and load your registration.";
-    });
-  }
+  const navRegister = document.getElementById("navRegister"), navAudit = document.getElementById("navAudit");
+  if (navRegister) navRegister.addEventListener("click", (e) => { e.preventDefault(); chrome.tabs.create({ url: "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/classRegistration" }); closeSidebar(); });
+  if (navAudit) navAudit.addEventListener("click", (e) => { e.preventDefault(); chrome.tabs.create({ url: "https://dw-prod.ec.txstate.edu/responsiveDashboard/worksheets/WEB31" }); closeSidebar(); });
+  const overviewToggle = document.getElementById("overviewToggle");
+  if (overviewToggle) overviewToggle.addEventListener("click", toggleOverview);
 });
 
 // ============================================================
-// RIGHT PANEL RESIZE (Simone)
+// RIGHT PANEL RESIZE
 // ============================================================
 document.addEventListener("DOMContentLoaded", () => {
-  const handle = document.getElementById("resizeHandle");
-  const panel = document.getElementById("rightPanel");
+  const handle = document.getElementById("resizeHandle"), panel = document.getElementById("rightPanel");
   if (!handle || !panel) return;
-  let dragging = false,
-    startX = 0,
-    startWidth = 0;
-  handle.addEventListener("mousedown", (e) => {
-    dragging = true;
-    startX = e.clientX;
-    startWidth = panel.offsetWidth;
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
+  let dragging = false, startX = 0, startWidth = 0;
+  handle.addEventListener("mousedown", (e) => { dragging = true; startX = e.clientX; startWidth = panel.offsetWidth; document.body.style.cursor = "col-resize"; document.body.style.userSelect = "none"; });
+  document.addEventListener("mousemove", (e) => { if (!dragging) return; panel.style.width = Math.min(600, Math.max(200, startWidth + (startX - e.clientX))) + "px"; });
+  document.addEventListener("mouseup", () => { if (!dragging) return; dragging = false; document.body.style.cursor = ""; document.body.style.userSelect = ""; });
+});
+
+// ============================================================
+// COURSE DETAIL MODAL (Simone)
+// ============================================================
+document.addEventListener("DOMContentLoaded", () => {
+  const modal = document.getElementById("courseModal");
+  const overlay = document.getElementById("modalOverlay");
+  const closeBtn = document.getElementById("modalClose");
+  const modalProfEmailEl = document.getElementById("modalProfEmail");
+  const modalCopyEmailBtn = document.getElementById("modalCopyEmail");
+  const modalEmailBtn = document.getElementById("modalEmail");
+  const modalRMPBtn = document.getElementById("modalRMP");
+
+  if (!modal || !overlay) return;
+
+  let modalEmailGeneration = 0;
+  let modalResolvedEmail = "";
+  let currentModalMeta = null;
+
+  function setModalResolvedEmail(email, showCopy) {
+    modalResolvedEmail = email && showCopy ? email : "";
+    if (modalProfEmailEl) modalProfEmailEl.textContent = email || "—";
+    if (modalCopyEmailBtn) modalCopyEmailBtn.hidden = !showCopy;
+    if (modalEmailBtn) { modalEmailBtn.toggleAttribute("disabled", !showCopy); modalEmailBtn.classList.toggle("disabled", !showCopy); }
+  }
+
+  async function resolveModalEmail(meta) {
+    const gen = ++modalEmailGeneration;
+    modalResolvedEmail = "";
+    if (!meta || typeof window.BobcatFaculty === "undefined" || !meta.courseCode || meta.professor === "—") { setModalResolvedEmail("—", false); return; }
+    setModalResolvedEmail("Looking up…", false);
+    try {
+      const hit = await window.BobcatFaculty.getInstructorEmail(meta.courseCode.trim(), meta.professor);
+      if (gen !== modalEmailGeneration) return;
+      if (hit && hit.email) setModalResolvedEmail(hit.email, true);
+      else setModalResolvedEmail("Not in directory", false);
+    } catch (err) { if (gen !== modalEmailGeneration) return; setModalResolvedEmail("—", false); }
+  }
+
+  async function openModal(block) {
+    const crn = block.getAttribute("data-crn") || "";
+    let meta = crn ? calendarCourseMetaByCrn.get(String(crn)) : null;
+    const titleFromBlock = block.querySelector(".course-title")?.textContent?.trim() || "";
+    const timeEls = block.querySelectorAll(".course-time");
+    const timeFromBlock = timeEls[0]?.textContent?.trim() || "—";
+    const secondLine = timeEls[1]?.textContent?.trim() || "";
+    const termForSearch = (typeof currentTerm !== "undefined" && currentTerm) || document.getElementById("termSelect")?.value || "";
+
+    function applyModalFields(m) {
+      document.getElementById("modalTitle").textContent = m ? (m.subject || "") + " " + (m.courseNumber || "") : titleFromBlock;
+      document.getElementById("modalSub").textContent = m?.title || secondLine || "";
+      document.getElementById("modalSection").textContent = m?.section ?? "—";
+      document.getElementById("modalCRN").textContent = crn || "—";
+      document.getElementById("modalTime").textContent = m?.meetingTimeDisplay || timeFromBlock;
+      document.getElementById("modalProf").textContent = m?.professor ?? "—";
+      document.getElementById("modalLocation").textContent = m?.location ?? "—";
+      document.getElementById("modalMethod").textContent = m?.instructionalMethod ?? "—";
+    }
+
+    applyModalFields(meta);
+
+    const needsHydration = crn && termForSearch && (!meta || isDashPlaceholder(meta.section) || isDashPlaceholder(meta.professor) || isDashPlaceholder(meta.location) || isDashPlaceholder(meta.instructionalMethod));
+    if (needsHydration) {
+      let subj = meta?.subject || "", num = meta?.courseNumber || "";
+      if (!subj || !num) { const parsed = parseCourseCodeFromTitle(titleFromBlock); subj = parsed.subject; num = parsed.courseNumber; }
+      if (subj && num) {
+        const row = await fetchBannerSectionRowByCrn(termForSearch, crn, subj, num);
+        if (row) { const fresh = extractMetaFromRegistrationEvent(row); fresh.meetingTimeDisplay = meta?.meetingTimeDisplay || timeFromBlock; meta = mergeRegistrationMetaForModal(meta, fresh); if (crn) registerCourseMeta(String(crn), meta); applyModalFields(meta); }
+      }
+    }
+
+    setModalResolvedEmail("…", false);
+    modal.classList.add("active");
+    overlay.classList.add("active");
+    currentModalMeta = meta || null;
+    if (meta) resolveModalEmail(meta); else setModalResolvedEmail("—", false);
+  }
+
+  function closeModal() { modal.classList.remove("active"); overlay.classList.remove("active"); modalEmailGeneration++; currentModalMeta = null; setModalResolvedEmail("—", false); }
+
+  // Wire block clicks — calendar works in all modes
+  document.getElementById("calendar").addEventListener("click", async (e) => {
+    const block = e.target.closest(".course-block");
+    if (block) await openModal(block);
   });
-  document.addEventListener("mousemove", (e) => {
-    if (!dragging) return;
-    const delta = startX - e.clientX;
-    panel.style.width = Math.min(600, Math.max(200, startWidth + delta)) + "px";
-  });
-  document.addEventListener("mouseup", () => {
-    if (!dragging) return;
-    dragging = false;
-    document.body.style.cursor = "";
-    document.body.style.userSelect = "";
-  });
+
+  if (modalCopyEmailBtn) modalCopyEmailBtn.addEventListener("click", (e) => { e.stopPropagation(); if (modalResolvedEmail && typeof window.BobcatFaculty !== "undefined") window.BobcatFaculty.copyText(modalResolvedEmail); });
+  if (modalEmailBtn) modalEmailBtn.addEventListener("click", (e) => { if (!modalResolvedEmail) { e.preventDefault(); return; } e.preventDefault(); window.location.href = window.BobcatFaculty.buildMailtoUrl(modalResolvedEmail, "", ""); });
+  if (modalRMPBtn) {
+    modalRMPBtn.setAttribute("type", "button");
+    modalRMPBtn.setAttribute("title", "Open Rate My Professor (Texas State)");
+    modalRMPBtn.addEventListener("click", (e) => { e.preventDefault(); const prof = currentModalMeta?.professor || document.getElementById("modalProf")?.textContent?.trim(); chrome.tabs.create({ url: buildRateMyProfessorsUrl(prof) }); });
+  }
+  if (closeBtn) closeBtn.addEventListener("click", closeModal);
+  if (overlay) overlay.addEventListener("click", closeModal);
 });
