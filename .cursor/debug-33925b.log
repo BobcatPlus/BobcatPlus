@@ -1,0 +1,2 @@
+{"sessionId":"33925b","location":"tab.js:activateNewPlanRow","message":"skip clear — already on New Plan","data":{"wcLen":2},"timestamp":1776600299359,"hypothesisId":"H1-reselect-new"}
+{"sessionId":"33925b","location":"tab.js:enterNewPlanEditMode","message":"rename only — preserve calendar","data":{"wcLen":2},"timestamp":1776600299527,"hypothesisId":"H1-reselect-new"}

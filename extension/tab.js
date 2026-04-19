@@ -225,6 +225,40 @@ let registeredFetchOk = false;
 let bannerPlans = [];
 let registeredScheduleCache = {};
 
+/** Persist last successful Banner registration payload so a new tab can render before cookies warm up */
+const REG_EVENTS_STORAGE_KEY = "bobcatRegEventsCache";
+
+function persistRegistrationEvents(term, events) {
+  if (!term || !Array.isArray(events) || events.length === 0) return;
+  try {
+    chrome.storage.local.set({
+      [REG_EVENTS_STORAGE_KEY]: {
+        term: String(term),
+        events,
+        savedAt: Date.now(),
+      },
+    });
+  } catch (_) {}
+}
+
+function loadCachedRegistrationEvents(term) {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(REG_EVENTS_STORAGE_KEY, (obj) => {
+      const c = obj[REG_EVENTS_STORAGE_KEY];
+      if (
+        c &&
+        String(c.term) === String(term) &&
+        Array.isArray(c.events) &&
+        c.events.length
+      ) {
+        resolve(c.events);
+        return;
+      }
+      resolve(null);
+    });
+  });
+}
+
 // Eligible courses (shared between Build and AI)
 let eligibleCourses = [];
 let expandedCourseKey = null;
@@ -233,11 +267,18 @@ let selectedSectionByCourse = {};
 // ── UNIFIED WORKING SCHEDULE ──────────────────────────────
 // workingCourses: array of course entries on the calendar right now
 // Each entry: { crn, subject, courseNumber, title, days, beginTime, endTime, source, online }
-// source: "registered" | "manual" | "ai"
+// source: "registered" | "banner" | "saved" | "manual" | "ai"
 let workingCourses = [];
 
-// lockedCrns: Set of CRNs the user has locked. Registered courses locked by default.
+// lockedCrns: Set of CRNs the user has locked. Registered courses default to locked; banner plans start unlocked.
 let lockedCrns = new Set();
+
+// Invalidate in-flight async schedule loads (e.g. TXST plan fetch) when user picks another schedule
+let scheduleViewGeneration = 0;
+function bumpScheduleViewGeneration() {
+  scheduleViewGeneration += 1;
+  return scheduleViewGeneration;
+}
 
 // ── UI MODE ───────────────────────────────────────────────
 // "build" or "ai"
@@ -307,7 +348,11 @@ function dbgLog(location, message, data, hypothesisId) {
   });
 
   chrome.runtime.sendMessage({ action: "getTerms" }, (terms) => {
-    if (!terms || terms.length === 0) return;
+    if (!terms || terms.length === 0) {
+      const sb = $("statusBar");
+      if (sb) sb.textContent = "Could not load terms. Reload this page or try again.";
+      return;
+    }
     const select = $("termSelect");
     const now = new Date();
     let currentIdx = 0;
@@ -546,10 +591,13 @@ if (importBtn) {
     cachedRegisteredCourses = [];
     cachedRegisteredTerm = null;
     conversationHistory = [];
-    await loadSchedule(currentTerm);
-    importBtn.disabled = false;
-    importBtn.classList.remove("loading");
-    importBtn.innerHTML = importSvg;
+    try {
+      await loadSchedule(currentTerm);
+    } finally {
+      importBtn.disabled = false;
+      importBtn.classList.remove("loading");
+      importBtn.innerHTML = importSvg;
+    }
   });
 }
 
@@ -681,18 +729,67 @@ async function getCurrentSchedule(term) {
 // LOAD SCHEDULE — populates workingCourses from registered events
 // ============================================================
 
+/** One row per CRN from Banner registration events (same shape as loadSchedule). */
+function buildRegisteredCoursesFromEvents(data) {
+  const seen = new Set();
+  const registered = [];
+  const locks = new Set();
+  if (!data || !data.length) return { registered, locks: locks };
+  for (const event of data) {
+    if (seen.has(event.crn)) continue;
+    seen.add(event.crn);
+    const start = new Date(event.start);
+    const end = new Date(event.end);
+    const dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+    const days = [];
+    for (const ev2 of data) {
+      if (String(ev2.crn) !== String(event.crn)) continue;
+      const d = new Date(ev2.start).getDay() - 1;
+      if (d >= 0 && d <= 4 && !days.includes(dayNames[d]))
+        days.push(dayNames[d]);
+    }
+    const bh = start.getHours(),
+      bm = start.getMinutes();
+    const eh = end.getHours(),
+      em = end.getMinutes();
+    registered.push({
+      crn: String(event.crn),
+      subject: event.subject,
+      courseNumber: event.courseNumber,
+      title: event.title,
+      days,
+      beginTime:
+        String(bh).padStart(2, "0") + ":" + String(bm).padStart(2, "0"),
+      endTime:
+        String(eh).padStart(2, "0") + ":" + String(em).padStart(2, "0"),
+      source: "registered",
+      online: false,
+    });
+    locks.add(String(event.crn));
+  }
+  return { registered, locks };
+}
+
 // viewRegistered listener wired in DOMContentLoaded to avoid null ref at parse time
 
 async function loadSchedule(term) {
   registeredFetchCompleted = false;
   $("statusBar").textContent = "Loading schedule...";
 
+  let fromDiskCache = false;
   let data = await getCurrentSchedule(term);
   if (data === null) {
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 16; i++) {
       await waitAnimationFrames(2);
       data = await getCurrentSchedule(term);
       if (data !== null) break;
+    }
+  }
+  if (data === null) {
+    const cached = await loadCachedRegistrationEvents(term);
+    if (cached) {
+      data = cached;
+      fromDiskCache = true;
     }
   }
 
@@ -706,6 +803,7 @@ async function loadSchedule(term) {
       registeredFetchOk,
       dataNull: data === null,
       dataLen: Array.isArray(data) ? data.length : -1,
+      fromDiskCache,
     },
     "H4",
   );
@@ -716,43 +814,8 @@ async function loadSchedule(term) {
     cachedRegisteredCourses = compressRegisteredForLLM(data);
     cachedRegisteredTerm = term;
 
-    // Build working courses from registered events — deduplicate by CRN
-    const seen = new Set();
-    const registered = [];
-    for (const event of data) {
-      if (seen.has(event.crn)) continue;
-      seen.add(event.crn);
-      const start = new Date(event.start);
-      const end = new Date(event.end);
-      const dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri"];
-      // Collect all days for this CRN
-      const days = [];
-      for (const ev2 of data) {
-        if (String(ev2.crn) !== String(event.crn)) continue;
-        const d = new Date(ev2.start).getDay() - 1;
-        if (d >= 0 && d <= 4 && !days.includes(dayNames[d]))
-          days.push(dayNames[d]);
-      }
-      const bh = start.getHours(),
-        bm = start.getMinutes();
-      const eh = end.getHours(),
-        em = end.getMinutes();
-      registered.push({
-        crn: String(event.crn),
-        subject: event.subject,
-        courseNumber: event.courseNumber,
-        title: event.title,
-        days,
-        beginTime:
-          String(bh).padStart(2, "0") + ":" + String(bm).padStart(2, "0"),
-        endTime:
-          String(eh).padStart(2, "0") + ":" + String(em).padStart(2, "0"),
-        source: "registered",
-        online: false,
-      });
-      // Registered courses default to locked
-      lockedCrns.add(String(event.crn));
-    }
+    const { registered, locks } = buildRegisteredCoursesFromEvents(data);
+    lockedCrns = locks;
 
     // Preserve any manual/AI courses added since last load
     workingCourses = [
@@ -764,7 +827,16 @@ async function loadSchedule(term) {
     updateWeekHours(data);
     updateOverviewFromEvents(data);
     const unique = new Set(data.map((e) => e.crn));
-    $("statusBar").textContent = unique.size + " registered courses";
+    if (!fromDiskCache) {
+      persistRegistrationEvents(term, data);
+    }
+    const sb = $("statusBar");
+    if (sb) {
+      sb.textContent = fromDiskCache
+        ? unique.size +
+          " registered courses (saved copy — use Import Schedule to refresh)"
+        : unique.size + " registered courses";
+    }
     updateSaveBtn();
   } else if (data === null) {
     cachedRegisteredCourses = [];
@@ -823,8 +895,31 @@ function updateSaveBtn() {
 }
 
 function activateNewPlanRow() {
+  // Already viewing New Plan — keep draft; avoid clearing on accidental re-click
+  if (activeScheduleKey === "new") {
+    // #region agent log
+    fetch("http://127.0.0.1:7590/ingest/2a571ae1-604a-4281-a7bb-8aa23a705774", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "33925b",
+      },
+      body: JSON.stringify({
+        sessionId: "33925b",
+        location: "tab.js:activateNewPlanRow",
+        message: "skip clear — already on New Plan",
+        data: { wcLen: workingCourses.length },
+        timestamp: Date.now(),
+        hypothesisId: "H1-reselect-new",
+      }),
+    }).catch(() => {});
+    // #endregion
+    return;
+  }
+  bumpScheduleViewGeneration();
   activeScheduleKey = "new";
-  workingCourses = workingCourses.filter((c) => c.source === "registered");
+  workingCourses = [];
+  lockedCrns = new Set();
   renderCalendarFromWorkingCourses();
   updateSaveBtn();
   renderSavedList();
@@ -834,10 +929,33 @@ function enterNewPlanEditMode() {
   const row = document.querySelector(".saved-item-new-plan");
   if (!row || row.querySelector(".new-plan-input")) return;
 
-  activeScheduleKey = "new";
-  workingCourses = workingCourses.filter((c) => c.source === "registered");
-  renderCalendarFromWorkingCourses();
-  updateSaveBtn();
+  // Only reset calendar when switching from another schedule into New Plan
+  if (activeScheduleKey !== "new") {
+    bumpScheduleViewGeneration();
+    activeScheduleKey = "new";
+    workingCourses = [];
+    lockedCrns = new Set();
+    renderCalendarFromWorkingCourses();
+    updateSaveBtn();
+  } else {
+    // #region agent log
+    fetch("http://127.0.0.1:7590/ingest/2a571ae1-604a-4281-a7bb-8aa23a705774", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "33925b",
+      },
+      body: JSON.stringify({
+        sessionId: "33925b",
+        location: "tab.js:enterNewPlanEditMode",
+        message: "rename only — preserve calendar",
+        data: { wcLen: workingCourses.length },
+        timestamp: Date.now(),
+        hypothesisId: "H1-reselect-new",
+      }),
+    }).catch(() => {});
+    // #endregion
+  }
 
   document.querySelectorAll("#savedList .saved-item").forEach((el) => {
     el.classList.toggle("active", el.classList.contains("saved-item-new-plan"));
@@ -904,9 +1022,34 @@ function buildEmptyCalendar() {
   $("calendar").innerHTML = html;
 }
 
+function assignOverlapColumns(cellItems) {
+  cellItems.sort(
+    (a, b) =>
+      a.startOffset - b.startOffset ||
+      String(a.crnKey).localeCompare(String(b.crnKey)),
+  );
+  const colEnd = [];
+  for (const it of cellItems) {
+    const end = it.startOffset + it.height;
+    let c = 0;
+    for (; c < colEnd.length; c++) {
+      if (colEnd[c] <= it.startOffset + 0.5) break;
+    }
+    if (c === colEnd.length) colEnd.push(end);
+    else colEnd[c] = end;
+    it.col = c;
+  }
+  const n = colEnd.length;
+  cellItems.forEach((it) => {
+    it.colCount = n;
+  });
+}
+
 function renderCalendarFromWorkingCourses() {
   buildEmptyCalendar();
   const dayMap = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4 };
+
+  const cellBuckets = new Map();
 
   for (const course of workingCourses) {
     if (!course.days || !course.beginTime || !course.endTime) continue;
@@ -923,61 +1066,88 @@ function renderCalendarFromWorkingCourses() {
     for (const day of course.days) {
       const dayIdx = dayMap[day];
       if (dayIdx === undefined) continue;
-      const cell = $("cell-" + dayIdx + "-" + bh);
+      const cellKey = dayIdx + "-" + bh;
+      if (!cellBuckets.has(cellKey)) cellBuckets.set(cellKey, []);
+      cellBuckets.get(cellKey).push({
+        course,
+        dayIdx,
+        bh,
+        startOffset,
+        height,
+        timeStr,
+        crnKey,
+        isLocked,
+        courseKey,
+        chipClass,
+      });
+    }
+  }
+
+  for (const [, items] of cellBuckets) {
+    assignOverlapColumns(items);
+  }
+
+  for (const [, items] of cellBuckets) {
+    for (const p of items) {
+      const cell = $("cell-" + p.dayIdx + "-" + p.bh);
       if (!cell) continue;
 
       const block = document.createElement("div");
       block.className =
-        "course-block " + chipClass + (isLocked ? " locked" : "");
-      block.setAttribute("data-crn", crnKey);
-      block.style.top = startOffset + "px";
-      block.style.height = height + "px";
+        "course-block " + p.chipClass + (p.isLocked ? " locked" : "");
+      block.setAttribute("data-crn", p.crnKey);
+      block.style.top = p.startOffset + "px";
+      block.style.height = p.height + "px";
+      if (p.colCount > 1) {
+        const n = p.colCount;
+        const col = p.col;
+        block.style.left =
+          "calc(3px + " + col + " * ((100% - 6px) / " + n + "))";
+        block.style.width = "calc((100% - 6px) / " + n + " - 2px)";
+        block.style.right = "auto";
+        block.style.zIndex = String(1 + col);
+      }
 
-      // Lock icon — filled when locked, outline when not
-      const lockSvg = isLocked
+      const lockSvg = p.isLocked
         ? `<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`
         : `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`;
 
       block.innerHTML =
         '<div class="block-info">' +
         '<div class="course-title">' +
-        course.subject +
+        p.course.subject +
         " " +
-        course.courseNumber +
+        p.course.courseNumber +
         "</div>" +
         '<div class="course-time">' +
-        timeStr +
+        p.timeStr +
         "</div>" +
         '<div class="course-time">' +
-        (course.title || "") +
+        (p.course.title || "") +
         "</div>" +
         "</div>" +
         '<div class="block-actions">' +
-        '<button class="block-remove-btn" title="Remove" style="' +
-        (isLocked ? "visibility:hidden;" : "") +
-        '">✕</button>' +
+        '<button class="block-remove-btn" title="Remove">✕</button>' +
         '<button class="block-lock-btn" title="' +
-        (isLocked ? "Unlock" : "Lock") +
+        (p.isLocked ? "Unlock" : "Lock") +
         '">' +
         lockSvg +
         "</button>" +
         "</div>";
 
-      // Remove button
       const removeBtn = block.querySelector(".block-remove-btn");
       if (removeBtn) {
         removeBtn.addEventListener("click", (e) => {
           e.stopPropagation();
-          removeFromWorkingSchedule(crnKey);
+          removeFromWorkingSchedule(p.crnKey);
         });
       }
 
-      // Lock button
       const lockBtn = block.querySelector(".block-lock-btn");
       if (lockBtn) {
         lockBtn.addEventListener("click", (e) => {
           e.stopPropagation();
-          toggleLock(crnKey);
+          toggleLock(p.crnKey);
         });
       }
 
@@ -1425,8 +1595,17 @@ function renderSavedList() {
     (activeScheduleKey === "registered" ? " active" : "");
   regItem.innerHTML = '<span class="name">Current Registered Schedule</span>';
   regItem.addEventListener("click", () => {
+    bumpScheduleViewGeneration();
     activeScheduleKey = "registered";
-    workingCourses = workingCourses.filter((c) => c.source === "registered");
+    const cached = registeredScheduleCache[currentTerm];
+    if (cached && cached.length) {
+      const { registered, locks } = buildRegisteredCoursesFromEvents(cached);
+      lockedCrns = locks;
+      workingCourses = registered;
+    } else {
+      workingCourses = workingCourses.filter((c) => c.source === "registered");
+      lockedCrns = new Set(workingCourses.map((c) => String(c.crn)));
+    }
     renderCalendarFromWorkingCourses();
     renderSavedList();
     $("statusBar").textContent = "Viewing registered schedule";
@@ -1454,6 +1633,7 @@ function renderSavedList() {
       '">×</span>';
     item.addEventListener("click", (e) => {
       if (e.target.classList.contains("delete-btn")) return;
+      bumpScheduleViewGeneration();
       activeScheduleKey = key;
       renderSavedScheduleOnCalendar(schedule);
       renderSavedList();
@@ -1503,72 +1683,76 @@ function renderSavedList() {
 
     item.addEventListener("click", async (e) => {
       if (e.target.classList.contains("delete-btn")) return;
+      const viewGen = bumpScheduleViewGeneration();
       activeScheduleKey = key;
       renderSavedList();
 
-      // Fetch events if not cached yet
-      if (!plan.events || plan.events.length === 0) {
-        $("statusBar").textContent = "Loading " + plan.name + "…";
-        buildEmptyCalendar();
-        const events = await sendToBackground({
-          action: "fetchPlanCalendar",
-          term: currentTerm,
-          planCourses: plan.planCourses || [],
-        });
-        plan.events = events || [];
-        if (!plan.events.length) {
-          buildEmptyCalendar();
-          $("statusBar").textContent = plan.name + ": no meeting times found.";
-          return;
+      try {
+        // Fetch events if not cached yet (keep calendar as-is until data arrives)
+        if (!plan.events || plan.events.length === 0) {
+          $("statusBar").textContent = "Loading " + plan.name + "…";
+          const events = await sendToBackground({
+            action: "fetchPlanCalendar",
+            term: currentTerm,
+            planCourses: plan.planCourses || [],
+          });
+          if (viewGen !== scheduleViewGeneration) return;
+          plan.events = events || [];
+          if (!plan.events.length) {
+            buildEmptyCalendar();
+            $("statusBar").textContent = plan.name + ": no meeting times found.";
+            return;
+          }
+        }
+
+        if (viewGen !== scheduleViewGeneration) return;
+
+        const planCourses = plan.events.reduce((acc, event) => {
+          const crn = String(event.crn || "");
+          const existing = acc.find((c) => c.crn === crn);
+          const dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+          const start = new Date(event.start);
+          const dayIdx = start.getDay() - 1;
+          const day = dayIdx >= 0 && dayIdx <= 4 ? dayNames[dayIdx] : null;
+          const bh = start.getHours(),
+            bm = start.getMinutes();
+          const end = new Date(event.end);
+          const eh = end.getHours(),
+            em = end.getMinutes();
+          if (existing) {
+            if (day && !existing.days.includes(day)) existing.days.push(day);
+          } else {
+            acc.push({
+              crn,
+              subject: event.subject || "",
+              courseNumber: event.courseNumber || "",
+              title: event.title || "",
+              days: day ? [day] : [],
+              beginTime:
+                String(bh).padStart(2, "0") + ":" + String(bm).padStart(2, "0"),
+              endTime:
+                String(eh).padStart(2, "0") + ":" + String(em).padStart(2, "0"),
+              source: "banner",
+              online: false,
+            });
+          }
+          return acc;
+        }, []);
+
+        if (viewGen !== scheduleViewGeneration) return;
+
+        workingCourses = planCourses;
+        lockedCrns = new Set();
+
+        renderCalendarFromWorkingCourses();
+        updateWeekHours(plan.events);
+        $("statusBar").textContent = "Viewing: " + plan.name;
+      } catch (err) {
+        console.error("[BobcatPlus] banner plan load:", err);
+        if (viewGen === scheduleViewGeneration) {
+          $("statusBar").textContent = "Could not load plan. Try again.";
         }
       }
-
-      // Load into workingCourses so lock/remove buttons render correctly
-      const planCourses = plan.events.reduce((acc, event) => {
-        const crn = String(event.crn || "");
-        const existing = acc.find((c) => c.crn === crn);
-        const dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri"];
-        const start = new Date(event.start);
-        const dayIdx = start.getDay() - 1;
-        const day = dayIdx >= 0 && dayIdx <= 4 ? dayNames[dayIdx] : null;
-        const bh = start.getHours(),
-          bm = start.getMinutes();
-        const end = new Date(event.end);
-        const eh = end.getHours(),
-          em = end.getMinutes();
-        if (existing) {
-          if (day && !existing.days.includes(day)) existing.days.push(day);
-        } else {
-          acc.push({
-            crn,
-            subject: event.subject || "",
-            courseNumber: event.courseNumber || "",
-            title: event.title || "",
-            days: day ? [day] : [],
-            beginTime:
-              String(bh).padStart(2, "0") + ":" + String(bm).padStart(2, "0"),
-            endTime:
-              String(eh).padStart(2, "0") + ":" + String(em).padStart(2, "0"),
-            source: "registered", // treat as registered so they default locked
-            online: false,
-          });
-          lockedCrns.add(crn); // lock all plan courses by default
-        }
-        return acc;
-      }, []);
-
-      // Replace non-registered working courses with this plan's courses
-      workingCourses = [
-        ...workingCourses.filter((c) => c.source === "registered"),
-        ...planCourses.filter(
-          (c) =>
-            !workingCourses.some((w) => String(w.crn) === String(c.crn)),
-        ),
-      ];
-
-      renderCalendarFromWorkingCourses();
-      updateWeekHours(plan.events);
-      $("statusBar").textContent = "Viewing: " + plan.name;
     });
 
     list.appendChild(item);
