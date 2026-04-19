@@ -970,9 +970,20 @@ async function runAnalysis(sendUpdate, termCodeOverride) {
   });
 
   if (needed.length === 0) {
+    let termCode = termCodeOverride;
+    if (!termCode) {
+      const t = await getCurrentTerm();
+      termCode = t.code;
+    }
     sendUpdate({
       type: "done",
-      data: { eligible: [], blocked: [], notOffered: [], needed: [] },
+      data: {
+        eligible: [],
+        blocked: [],
+        notOffered: [],
+        needed: [],
+        termCode,
+      },
     });
     return;
   }
@@ -1064,7 +1075,16 @@ async function runAnalysis(sendUpdate, termCodeOverride) {
     }),
   );
 
-  sendUpdate({ type: "done", data: { eligible, blocked, notOffered, needed } });
+  sendUpdate({
+    type: "done",
+    data: {
+      eligible,
+      blocked,
+      notOffered,
+      needed,
+      termCode: term.code,
+    },
+  });
 }
 
 // --- Get available terms ---
@@ -1590,6 +1610,7 @@ function openLoginPopup(sendResponse) {
 
     // Step 2: Registration session is warm — close popup and signal success
     if (dwDone && tab.url.includes(REG_SUCCESS)) {
+      cancelled = true;
       cleanup();
       setTimeout(() => {
         chrome.windows.remove(popupWindowId, () => {
@@ -1624,12 +1645,21 @@ function openLoginPopup(sendResponse) {
   );
 }
 
+// Serialize degree-audit / eligible runs — Banner registration session breaks under overlap.
+let analysisRunQueue = Promise.resolve();
+
 // --- Listen for messages from popup and full tab ---
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "runAnalysis") {
-    runAnalysis((update) => {
-      chrome.runtime.sendMessage(update);
-    }, message.term || null);
+    const gen = message.analysisGen ?? 0;
+    const term = message.term || null;
+    analysisRunQueue = analysisRunQueue
+      .then(() =>
+        runAnalysis((update) => {
+          chrome.runtime.sendMessage({ ...update, analysisGen: gen });
+        }, term),
+      )
+      .catch((e) => console.error("[BobcatPlus] runAnalysis:", e));
     sendResponse({ started: true });
   }
 
@@ -1665,9 +1695,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.action === "runAnalysisForTerm") {
-    runAnalysis((update) => {
-      chrome.runtime.sendMessage(update);
-    }, message.term || null);
+    const gen = message.analysisGen ?? 0;
+    const term = message.term || null;
+    analysisRunQueue = analysisRunQueue
+      .then(() =>
+        runAnalysis((update) => {
+          chrome.runtime.sendMessage({ ...update, analysisGen: gen });
+        }, term),
+      )
+      .catch((e) => console.error("[BobcatPlus] runAnalysisForTerm:", e));
     sendResponse({ started: true });
   }
 

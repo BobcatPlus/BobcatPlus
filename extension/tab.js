@@ -211,6 +211,8 @@ function sendToBackground(message) {
 let currentStudent = null;
 let currentTerm = null;
 let analysisResults = null;
+/** Increments each eligible-course analysis run; must match background message `analysisGen`. */
+let eligibleAnalysisSeq = 0;
 let savedSchedules = [];
 let conversationHistory = [];
 let cachedRawData = null;
@@ -278,6 +280,13 @@ let scheduleViewGeneration = 0;
 function bumpScheduleViewGeneration() {
   scheduleViewGeneration += 1;
   return scheduleViewGeneration;
+}
+
+// Drop stale registration fetches when term changes or Import runs again mid-flight
+let scheduleFetchGeneration = 0;
+function bumpScheduleFetchGeneration() {
+  scheduleFetchGeneration += 1;
+  return scheduleFetchGeneration;
 }
 
 // ── UI MODE ───────────────────────────────────────────────
@@ -480,6 +489,7 @@ async function autoLoadEligibleCourses() {
   const statusEl = $("eligibleStatus");
   if (statusEl) statusEl.textContent = "Loading your eligible courses…";
   analysisResults = await runAnalysisAndWait();
+  if (analysisResults._skippedStaleTerm) return;
   cachedRawData = analysisResults;
   eligibleCourses = analysisResults.eligible || [];
   renderEligibleList();
@@ -507,6 +517,76 @@ async function checkAuth() {
   }
 }
 
+/** Only one login listener at a time — repeated Import clicks must not stack handlers. */
+let importLoginListener = null;
+
+/** Shared post–login-popup flow for Import (session missing or registration empty). */
+function attachImportLoginListener(importBtn, importSvg) {
+  if (importLoginListener) {
+    chrome.runtime.onMessage.removeListener(importLoginListener);
+    importLoginListener = null;
+  }
+  importLoginListener = (msg) => {
+    if (msg.type === "loginSuccess") {
+      chrome.runtime.onMessage.removeListener(importLoginListener);
+      importLoginListener = null;
+      addMessage("system", "Login successful! Loading your schedule next…");
+      (async () => {
+        dbgLog(
+          "tab.js:loginSuccess",
+          "post-login async started",
+          { currentTerm },
+          "H2",
+        );
+        importBtn.textContent = "Importing...";
+        importBtn.classList.add("loading");
+        const authed2 = await checkAuth();
+        if (!authed2) {
+          addMessage(
+            "system",
+            "TXST session not ready yet. Wait a few seconds and click Import Schedule again.",
+          );
+          importBtn.disabled = false;
+          importBtn.classList.remove("loading");
+          importBtn.innerHTML = importSvg;
+          return;
+        }
+        await waitWithChatCountdown(1);
+        analysisResults = null;
+        cachedRawData = null;
+        cachedRegisteredCourses = [];
+        cachedRegisteredTerm = null;
+        conversationHistory = [];
+        $("statusBar").textContent = "Importing schedule...";
+        await loadSchedule(currentTerm);
+        sessionStorage.setItem(
+          "bobcat_dbg_post_login_reload",
+          String(Date.now()),
+        );
+        location.reload();
+      })().catch((err) => {
+        console.error("[BobcatPlus] post-login import:", err);
+        addMessage(
+          "system",
+          "Could not finish loading your schedule. Use Refresh in the chat or Import Schedule again.",
+        );
+        importBtn.disabled = false;
+        importBtn.classList.remove("loading");
+        importBtn.innerHTML = importSvg;
+      });
+    }
+    if (msg.type === "loginCancelled") {
+      chrome.runtime.onMessage.removeListener(importLoginListener);
+      importLoginListener = null;
+      addMessage("system", "Login cancelled. Click Import to try again.");
+      importBtn.disabled = false;
+      importBtn.classList.remove("loading");
+      importBtn.innerHTML = importSvg;
+    }
+  };
+  chrome.runtime.onMessage.addListener(importLoginListener);
+}
+
 const importBtn = document.getElementById("importBtn");
 if (importBtn) {
   importBtn.addEventListener("click", async () => {
@@ -523,64 +603,7 @@ if (importBtn) {
         "Opening TXST login — sign in and the import will start automatically.",
       );
       chrome.runtime.sendMessage({ action: "openLoginPopup" });
-
-      const loginListener = (msg) => {
-        if (msg.type === "loginSuccess") {
-          chrome.runtime.onMessage.removeListener(loginListener);
-          addMessage("system", "Login successful! Loading your schedule next…");
-          (async () => {
-            dbgLog(
-              "tab.js:loginSuccess",
-              "post-login async started",
-              { currentTerm },
-              "H2",
-            );
-            importBtn.textContent = "Importing...";
-            importBtn.classList.add("loading");
-            const authed2 = await checkAuth();
-            if (!authed2) {
-              addMessage(
-                "system",
-                "TXST session not ready yet. Wait a few seconds and click Import Schedule again.",
-              );
-              importBtn.disabled = false;
-              importBtn.classList.remove("loading");
-              importBtn.innerHTML = importSvg;
-              return;
-            }
-            await waitWithChatCountdown(1);
-            analysisResults = null;
-            cachedRawData = null;
-            cachedRegisteredCourses = [];
-            cachedRegisteredTerm = null;
-            conversationHistory = [];
-            $("statusBar").textContent = "Importing schedule...";
-            await loadSchedule(currentTerm);
-            sessionStorage.setItem(
-              "bobcat_dbg_post_login_reload",
-              String(Date.now()),
-            );
-            location.reload();
-          })().catch((err) => {
-            console.error("[BobcatPlus] post-login import:", err);
-            addMessage(
-              "system",
-              "Could not finish loading your schedule. Use Refresh in the chat or Import Schedule again.",
-            );
-            importBtn.disabled = false;
-            importBtn.classList.remove("loading");
-            importBtn.innerHTML = importSvg;
-          });
-        }
-        if (msg.type === "loginCancelled") {
-          chrome.runtime.onMessage.removeListener(loginListener);
-          addMessage("system", "Login cancelled. Click Import to try again.");
-          importBtn.disabled = false;
-          importBtn.classList.remove("loading");
-          importBtn.innerHTML = importSvg;
-        }
-      };
-      chrome.runtime.onMessage.addListener(loginListener);
+      attachImportLoginListener(importBtn, importSvg);
       return;
     }
 
@@ -591,12 +614,53 @@ if (importBtn) {
     cachedRegisteredCourses = [];
     cachedRegisteredTerm = null;
     conversationHistory = [];
+    let resetImportBtn = true;
     try {
-      await loadSchedule(currentTerm);
+      const scheduleResult = await loadSchedule(currentTerm);
+      // Session can look "ok" while registration returns empty — offer login to refresh cookies
+      if (scheduleResult.stale) {
+        return;
+      }
+      if (
+        !scheduleResult.hadRegistrationRows &&
+        !scheduleResult.fromDiskCache
+      ) {
+        // #region agent log
+        fetch("http://127.0.0.1:7590/ingest/2a571ae1-604a-4281-a7bb-8aa23a705774", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Debug-Session-Id": "33925b",
+          },
+          body: JSON.stringify({
+            sessionId: "33925b",
+            location: "tab.js:importBtn",
+            message: "no registration rows — open login",
+            data: {
+              fetchOk: scheduleResult.fetchOk,
+              fromDiskCache: scheduleResult.fromDiskCache,
+            },
+            timestamp: Date.now(),
+            hypothesisId: "H-import-empty",
+          }),
+        }).catch(() => {});
+        // #endregion
+        resetImportBtn = false;
+        importBtn.textContent = "Waiting for login...";
+        addMessage(
+          "system",
+          "Opening TXST login — sign in to load your registration.",
+        );
+        chrome.runtime.sendMessage({ action: "openLoginPopup" });
+        attachImportLoginListener(importBtn, importSvg);
+        return;
+      }
     } finally {
-      importBtn.disabled = false;
-      importBtn.classList.remove("loading");
-      importBtn.innerHTML = importSvg;
+      if (resetImportBtn) {
+        importBtn.disabled = false;
+        importBtn.classList.remove("loading");
+        importBtn.innerHTML = importSvg;
+      }
     }
   });
 }
@@ -773,6 +837,7 @@ function buildRegisteredCoursesFromEvents(data) {
 // viewRegistered listener wired in DOMContentLoaded to avoid null ref at parse time
 
 async function loadSchedule(term) {
+  const fetchGen = bumpScheduleFetchGeneration();
   registeredFetchCompleted = false;
   $("statusBar").textContent = "Loading schedule...";
 
@@ -791,6 +856,15 @@ async function loadSchedule(term) {
       data = cached;
       fromDiskCache = true;
     }
+  }
+
+  if (fetchGen !== scheduleFetchGeneration) {
+    return {
+      stale: true,
+      hadRegistrationRows: false,
+      fromDiskCache: false,
+      fetchOk: false,
+    };
   }
 
   registeredFetchOk = data !== null;
@@ -838,6 +912,12 @@ async function loadSchedule(term) {
         : unique.size + " registered courses";
     }
     updateSaveBtn();
+    return {
+      stale: false,
+      hadRegistrationRows: true,
+      fromDiskCache,
+      fetchOk: true,
+    };
   } else if (data === null) {
     cachedRegisteredCourses = [];
     cachedRegisteredTerm = term;
@@ -845,12 +925,24 @@ async function loadSchedule(term) {
     $("statusBar").textContent =
       "Could not reach registration data. Try Import Schedule again.";
     addScheduleRefreshPrompt();
+    return {
+      stale: false,
+      hadRegistrationRows: false,
+      fromDiskCache,
+      fetchOk: false,
+    };
   } else {
     removeExistingScheduleRefreshPrompts();
     cachedRegisteredCourses = [];
     cachedRegisteredTerm = term;
     buildEmptyCalendar();
     $("statusBar").textContent = "No registered courses for this term";
+    return {
+      stale: false,
+      hadRegistrationRows: false,
+      fromDiskCache: false,
+      fetchOk: true,
+    };
   }
 }
 
@@ -1858,6 +1950,14 @@ async function sendChat() {
     );
     $("statusBar").textContent = "Running analysis...";
     analysisResults = await runAnalysisAndWait();
+    if (analysisResults._skippedStaleTerm) {
+      addMessage(
+        "system",
+        "The term changed while loading. Send your message again.",
+      );
+      $("statusBar").textContent = "";
+      return;
+    }
     cachedRawData = analysisResults;
     eligibleCourses = analysisResults.eligible || [];
     if (!analysisResults.eligible || analysisResults.eligible.length === 0) {
@@ -2133,22 +2233,64 @@ function addScheduleOption(schedule) {
 // ============================================================
 
 function runAnalysisAndWait() {
+  const seq = ++eligibleAnalysisSeq;
   return new Promise((resolve) => {
     const results = { eligible: [], blocked: [], notOffered: [], needed: [] };
     const listener = (message) => {
+      if (message.analysisGen !== seq) return;
       if (message.type === "status")
         $("statusBar").textContent = message.message;
       if (message.type === "eligible") results.eligible.push(message.data);
       if (message.type === "blocked") results.blocked.push(message.data);
       if (message.type === "done") {
+        const doneTerm =
+          message.data && message.data.termCode != null
+            ? String(message.data.termCode)
+            : null;
+        if (doneTerm != null && doneTerm !== String(currentTerm)) {
+          chrome.runtime.onMessage.removeListener(listener);
+          resolve({
+            eligible: [],
+            blocked: [],
+            notOffered: [],
+            needed: [],
+            _skippedStaleTerm: true,
+          });
+          return;
+        }
         chrome.runtime.onMessage.removeListener(listener);
         results.notOffered = message.data.notOffered;
         results.needed = message.data.needed;
+        // #region agent log
+        fetch("http://127.0.0.1:7590/ingest/2a571ae1-604a-4281-a7bb-8aa23a705774", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Debug-Session-Id": "33925b",
+          },
+          body: JSON.stringify({
+            sessionId: "33925b",
+            location: "tab.js:runAnalysisAndWait:done",
+            message: "analysis done",
+            data: {
+              seq,
+              termCode: message.data && message.data.termCode,
+              eligibleN: (results.eligible || []).length,
+            },
+            timestamp: Date.now(),
+            hypothesisId: "H-eligible-seq",
+          }),
+        }).catch(() => {});
+        // #endregion
         resolve(results);
       }
     };
     chrome.runtime.onMessage.addListener(listener);
-    chrome.runtime.sendMessage({ action: "runAnalysis", term: currentTerm });
+    chrome.runtime.sendMessage({
+      action: "runAnalysis",
+      term: currentTerm,
+      analysisGen: seq,
+    });
   });
 }
 
