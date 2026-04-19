@@ -204,6 +204,7 @@ body {
   display: flex;
   overflow: hidden;
   align-items: stretch;
+  min-height: 0;
 }
 
 /* ── Calendar Panel ── */
@@ -646,7 +647,8 @@ body {
   background: var(--maroon-light);
 }
 
-.eligible-list {
+/* Eligible list — default (e.g. manual section); Build panel overrides below */
+.manual-section .eligible-list {
   max-height: 180px;
   overflow-y: auto;
   margin-bottom: 6px;
@@ -1269,16 +1271,22 @@ body {
   color: var(--text3);
   flex-shrink: 0;
 }
-.eligible-list {
+.build-panel .eligible-list {
   flex: 1;
-  overflow-y: auto;
-  border-top: 0.5px solid var(--border);
   min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  margin: 0 12px;
+  margin-bottom: 0;
+  border: 0.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
 }
 .txst-save-area {
   padding: 12px;
   border-top: 0.5px solid var(--border);
   flex-shrink: 0;
+  margin-top: auto;
   background: var(--surface);
 }
 

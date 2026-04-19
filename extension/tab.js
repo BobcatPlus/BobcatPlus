@@ -249,6 +249,11 @@ let schedulesCollapsed = false;
 // Which schedule is currently selected in the list
 let activeScheduleKey = "registered"; // "registered" | "new" | "saved:N" | "banner:N"
 
+// New Plan row — survives renderSavedList(); after first name edit blur, only double-click reopens editor
+let newPlanDisplayName = "";
+let newPlanSingleClickOpensEdit = true;
+let newPlanClickTimer = null;
+
 // Calendar constants — declared here so buildEmptyCalendar() can use them at any call time
 const START_HOUR = 7;
 const END_HOUR = 22;
@@ -361,6 +366,12 @@ $("termSelect").addEventListener("change", async (e) => {
   selectedSectionByCourse = {};
   workingCourses = [];
   lockedCrns = new Set();
+  newPlanDisplayName = "";
+  newPlanSingleClickOpensEdit = true;
+  if (newPlanClickTimer) {
+    clearTimeout(newPlanClickTimer);
+    newPlanClickTimer = null;
+  }
   buildEmptyCalendar();
   setPanelMode("build");
   if (await checkAuth()) {
@@ -776,25 +787,27 @@ async function loadSchedule(term) {
 // ============================================================
 
 function addToWorkingSchedule(entry) {
-  // Remove existing entry with same CRN if present
-  workingCourses = workingCourses.filter((c) => c.crn !== entry.crn);
-  workingCourses.push(entry);
+  const crn = String(entry.crn);
+  workingCourses = workingCourses.filter((c) => String(c.crn) !== crn);
+  workingCourses.push({ ...entry, crn });
   renderCalendarFromWorkingCourses();
   updateSaveBtn();
 }
 
 function removeFromWorkingSchedule(crn) {
-  workingCourses = workingCourses.filter((c) => c.crn !== crn);
-  lockedCrns.delete(crn);
+  const k = String(crn);
+  workingCourses = workingCourses.filter((c) => String(c.crn) !== k);
+  lockedCrns.delete(k);
   renderCalendarFromWorkingCourses();
   updateSaveBtn();
 }
 
 function toggleLock(crn) {
-  if (lockedCrns.has(crn)) {
-    lockedCrns.delete(crn);
+  const k = String(crn);
+  if (lockedCrns.has(k)) {
+    lockedCrns.delete(k);
   } else {
-    lockedCrns.add(crn);
+    lockedCrns.add(k);
   }
   renderCalendarFromWorkingCourses();
 }
@@ -807,6 +820,67 @@ function updateSaveBtn() {
   );
   saveBtn.classList.toggle("txst-save-btn--dim", !hasNonRegistered);
   saveBtn.disabled = !hasNonRegistered;
+}
+
+function activateNewPlanRow() {
+  activeScheduleKey = "new";
+  workingCourses = workingCourses.filter((c) => c.source === "registered");
+  renderCalendarFromWorkingCourses();
+  updateSaveBtn();
+  renderSavedList();
+}
+
+function enterNewPlanEditMode() {
+  const row = document.querySelector(".saved-item-new-plan");
+  if (!row || row.querySelector(".new-plan-input")) return;
+
+  activeScheduleKey = "new";
+  workingCourses = workingCourses.filter((c) => c.source === "registered");
+  renderCalendarFromWorkingCourses();
+  updateSaveBtn();
+
+  document.querySelectorAll("#savedList .saved-item").forEach((el) => {
+    el.classList.toggle("active", el.classList.contains("saved-item-new-plan"));
+  });
+
+  const span = row.querySelector(".new-plan-label");
+  if (!span) return;
+
+  span.style.display = "none";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "new-plan-input";
+  input.autocomplete = "off";
+  input.value = newPlanDisplayName;
+  row.appendChild(input);
+  requestAnimationFrame(() => {
+    input.focus();
+    input.select();
+  });
+
+  const commit = () => {
+    newPlanDisplayName = input.value.trim();
+    span.textContent = newPlanDisplayName || "New Plan";
+    span.style.display = "";
+    input.remove();
+    row.dataset.planName = newPlanDisplayName;
+    const saveBtn = $("saveTxstBtn");
+    if (saveBtn) saveBtn.dataset.planName = newPlanDisplayName;
+    newPlanSingleClickOpensEdit = false;
+    renderSavedList();
+  };
+
+  input.addEventListener("blur", commit);
+  input.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      input.blur();
+    }
+    if (ev.key === "Escape") {
+      input.value = newPlanDisplayName;
+      input.blur();
+    }
+  });
 }
 
 // ============================================================
@@ -841,7 +915,8 @@ function renderCalendarFromWorkingCourses() {
     const startOffset = (bm / 60) * 40;
     const height = (eh + em / 60 - (bh + bm / 60)) * 40;
     const timeStr = formatTime24to12(bh, bm) + " – " + formatTime24to12(eh, em);
-    const isLocked = lockedCrns.has(course.crn);
+    const crnKey = String(course.crn ?? "");
+    const isLocked = lockedCrns.has(crnKey);
     const courseKey = course.subject + course.courseNumber;
     const chipClass = getChipForCourse(courseKey);
 
@@ -854,7 +929,7 @@ function renderCalendarFromWorkingCourses() {
       const block = document.createElement("div");
       block.className =
         "course-block " + chipClass + (isLocked ? " locked" : "");
-      block.setAttribute("data-crn", course.crn);
+      block.setAttribute("data-crn", crnKey);
       block.style.top = startOffset + "px";
       block.style.height = height + "px";
 
@@ -893,7 +968,7 @@ function renderCalendarFromWorkingCourses() {
       if (removeBtn) {
         removeBtn.addEventListener("click", (e) => {
           e.stopPropagation();
-          removeFromWorkingSchedule(course.crn);
+          removeFromWorkingSchedule(crnKey);
         });
       }
 
@@ -902,7 +977,7 @@ function renderCalendarFromWorkingCourses() {
       if (lockBtn) {
         lockBtn.addEventListener("click", (e) => {
           e.stopPropagation();
-          toggleLock(course.crn);
+          toggleLock(crnKey);
         });
       }
 
@@ -1008,7 +1083,7 @@ function findFirstConflict(courses) {
 function getLockedForLLM() {
   // Returns all locked courses in the LLM-compatible format
   return workingCourses
-    .filter((c) => lockedCrns.has(c.crn))
+    .filter((c) => lockedCrns.has(String(c.crn)))
     .map((c) => {
       const startStr = c.beginTime ? c.beginTime.replace(":", "") : null;
       const endStr = c.endTime ? c.endTime.replace(":", "") : null;
@@ -1247,18 +1322,17 @@ document.addEventListener("DOMContentLoaded", () => {
       });
 
       if (!planName) {
-        // Prompt inline — highlight the New Plan item
         const newPlanLabel = document.querySelector(".new-plan-label");
         if (newPlanLabel) {
           newPlanLabel.style.color = "var(--maroon)";
-          newPlanLabel.textContent =
-            "Double-click New Plan to set a name first";
+          newPlanLabel.textContent = "Name your plan (double-click New Plan)";
           setTimeout(() => {
             newPlanLabel.style.color = "";
-            newPlanLabel.textContent = "+ New Plan";
+            newPlanLabel.textContent = newPlanDisplayName || "New Plan";
           }, 2500);
         }
-        $("statusBar").textContent = "Double-click New Plan to enter a name.";
+        $("statusBar").textContent =
+          "Double-click New Plan to enter a name, or type one and click away.";
         return;
       }
 
@@ -1306,10 +1380,16 @@ document.addEventListener("DOMContentLoaded", () => {
       $("statusBar").textContent = "Saved to TXST: " + planName;
 
       // Reset the New Plan item name
+      newPlanDisplayName = "";
+      newPlanSingleClickOpensEdit = true;
+      if (newPlanClickTimer) {
+        clearTimeout(newPlanClickTimer);
+        newPlanClickTimer = null;
+      }
       document.querySelectorAll(".saved-item-new-plan").forEach((el) => {
         el.dataset.planName = "";
         const lbl = el.querySelector(".new-plan-label");
-        if (lbl) lbl.textContent = "+ New Plan";
+        if (lbl) lbl.textContent = "New Plan";
       });
       if (saveTxstBtn) saveTxstBtn.dataset.planName = "";
 
@@ -1481,7 +1561,8 @@ function renderSavedList() {
       workingCourses = [
         ...workingCourses.filter((c) => c.source === "registered"),
         ...planCourses.filter(
-          (c) => !workingCourses.some((w) => w.crn === c.crn),
+          (c) =>
+            !workingCourses.some((w) => String(w.crn) === String(c.crn)),
         ),
       ];
 
@@ -1493,63 +1574,35 @@ function renderSavedList() {
     list.appendChild(item);
   });
 
-  // ── + New Plan — always last ──
+  // ── New Plan — always last ──
   const newPlanItem = document.createElement("div");
   newPlanItem.className =
     "saved-item saved-item-new-plan" +
     (activeScheduleKey === "new" ? " active" : "");
+  newPlanItem.dataset.planName = newPlanDisplayName;
 
   const newPlanSpan = document.createElement("span");
   newPlanSpan.className = "new-plan-label";
-  newPlanSpan.textContent = newPlanItem._savedName || "+ New Plan";
+  newPlanSpan.textContent = newPlanDisplayName || "New Plan";
   newPlanItem.appendChild(newPlanSpan);
 
-  let newPlanName = ""; // persists between renders via closure — reset on term change
-
-  function enterNewPlanEditMode() {
-    if (newPlanItem.querySelector(".new-plan-input")) return; // already editing
-    activeScheduleKey = "new";
-    workingCourses = workingCourses.filter((c) => c.source === "registered");
-    renderCalendarFromWorkingCourses();
-    updateSaveBtn();
-
-    newPlanSpan.style.display = "none";
-    const input = document.createElement("input");
-    input.type = "text";
-    input.className = "new-plan-input";
-    input.placeholder = "Enter plan name…";
-    input.value = newPlanName;
-    newPlanItem.appendChild(input);
-    // Use requestAnimationFrame to ensure DOM is ready before focus
-    requestAnimationFrame(() => input.focus());
-
-    const commit = () => {
-      newPlanName = input.value.trim();
-      newPlanSpan.textContent = newPlanName || "+ New Plan";
-      newPlanSpan.style.display = "";
-      input.remove();
-      // Store name on save button dataset for the save handler
-      const saveBtn = $("saveTxstBtn");
-      if (saveBtn) saveBtn.dataset.planName = newPlanName;
-      renderSavedList();
-    };
-
-    input.addEventListener("blur", commit);
-    input.addEventListener("keydown", (ev) => {
-      if (ev.key === "Enter") {
-        ev.preventDefault();
-        input.blur();
-      }
-      if (ev.key === "Escape") {
-        input.value = "";
-        input.blur();
-      }
-    });
-  }
-
-  // Single click — activate new plan mode AND open edit
   newPlanItem.addEventListener("click", (e) => {
     if (e.target.tagName === "INPUT") return;
+    if (newPlanSingleClickOpensEdit) {
+      enterNewPlanEditMode();
+      return;
+    }
+    clearTimeout(newPlanClickTimer);
+    newPlanClickTimer = setTimeout(() => {
+      newPlanClickTimer = null;
+      activateNewPlanRow();
+    }, 280);
+  });
+  newPlanItem.addEventListener("dblclick", (e) => {
+    if (e.target.tagName === "INPUT") return;
+    e.preventDefault();
+    clearTimeout(newPlanClickTimer);
+    newPlanClickTimer = null;
     enterNewPlanEditMode();
   });
 
@@ -1575,53 +1628,20 @@ function renderSavedList() {
 }
 
 function renderSavedScheduleOnCalendar(schedule) {
-  buildEmptyCalendar();
-  const dayMap = {
-    Mon: 0,
-    Tue: 1,
-    Wed: 2,
-    Thu: 3,
-    Fri: 4,
-    mon: 0,
-    tue: 1,
-    wed: 2,
-    thu: 3,
-    fri: 4,
-  };
-  for (const course of schedule.courses) {
-    if (!course.days || !course.beginTime || !course.endTime) continue;
-    const [bh, bm] = course.beginTime.split(":").map(Number);
-    const [eh, em] = course.endTime.split(":").map(Number);
-    const startOffset = (bm / 60) * 40;
-    const height = (eh + em / 60 - (bh + bm / 60)) * 40;
-    const timeStr = formatTime24to12(bh, bm) + " – " + formatTime24to12(eh, em);
-    for (const day of course.days) {
-      const dayIdx = dayMap[day];
-      if (dayIdx === undefined) continue;
-      const cell = $("cell-" + dayIdx + "-" + bh);
-      if (!cell) continue;
-      const courseKey = (course.subject || "") + (course.courseNumber || "");
-      const block = document.createElement("div");
-      block.className = "course-block " + getChipForCourse(courseKey);
-      block.style.top = startOffset + "px";
-      block.style.height = height + "px";
-      block.innerHTML =
-        '<div class="block-info">' +
-        '<div class="course-title">' +
-        (course.subject || "") +
-        " " +
-        (course.courseNumber || "") +
-        "</div>" +
-        '<div class="course-time">' +
-        timeStr +
-        "</div>" +
-        '<div class="course-time">CRN: ' +
-        (course.crn || "") +
-        "</div>" +
-        "</div>";
-      cell.appendChild(block);
-    }
-  }
+  const fromSaved = (schedule.courses || []).map((c) => ({
+    ...c,
+    crn: String(c.crn ?? ""),
+    source: "saved",
+  }));
+  lockedCrns = new Set();
+  workingCourses = [
+    ...workingCourses.filter((c) => c.source === "registered"),
+    ...fromSaved.filter(
+      (c) => !workingCourses.some((w) => String(w.crn) === c.crn),
+    ),
+  ];
+  renderCalendarFromWorkingCourses();
+  updateSaveBtn();
   $("statusBar").textContent = "Viewing: " + schedule.name;
 }
 
@@ -1914,7 +1934,7 @@ function addScheduleOption(schedule) {
   // Lock All — locks every course in this schedule
   div.querySelector(".lock-all-btn").addEventListener("click", () => {
     for (const c of courses) {
-      lockedCrns.add(c.crn);
+      lockedCrns.add(String(c.crn));
     }
     renderCalendarFromWorkingCourses();
     addMessage("system", "All courses in " + name + " locked.");
