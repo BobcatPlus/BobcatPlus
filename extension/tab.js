@@ -95,7 +95,6 @@ function applyPreFilter(compressed, registeredCourses) {
               }
             }
             return { ...section, conflictsWith: conflicts };
-            // Drop sections that conflict with registered courses entirely
           })
           .filter((s) => s.conflictsWith.length === 0);
 
@@ -243,15 +242,29 @@ set after each change.
 
 const $ = (id) => document.getElementById(id);
 
+function sendToBackground(message) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(message, resolve);
+  });
+}
+
 let currentStudent = null;
 let currentTerm = null;
 let analysisResults = null;
 let savedSchedules = [];
 let activeView = "registered";
-let conversationHistory = []; // persists for the session
-let cachedRawData = null; // holds analysis results across chat turns
-let cachedRegisteredCourses = []; // currently registered sections for conflict awareness
-let cachedRegisteredTerm = null; // which term those registered courses belong to
+let conversationHistory = [];
+let cachedRawData = null;
+let cachedRegisteredCourses = []; // for LLM conflict avoidance (main)
+let cachedRegisteredTerm = null; // which term those registered courses belong to (main)
+
+// Max's manual builder state
+let bannerPlans = []; // [{ name, crns, planNumber? }]
+let registeredScheduleCache = {}; // term → events array (UI cache)
+let eligibleCourses = [];
+let expandedCourseKey = null;
+let selectedSectionByCourse = {};
+let manualDraft = []; // [{ key, subject, courseNumber, section }]
 
 // ============================================================
 // INIT
@@ -264,7 +277,14 @@ let cachedRegisteredTerm = null; // which term those registered courses belong t
       $("studentName").textContent =
         student.name + " | " + student.major + " | " + student.degree;
       const ss = document.getElementById("sidebarStudent");
-      if (ss) ss.innerHTML = "<strong>" + student.name + "</strong><br>" + student.major + " | " + student.degree;
+      if (ss)
+        ss.innerHTML =
+          "<strong>" +
+          student.name +
+          "</strong><br>" +
+          student.major +
+          " | " +
+          student.degree;
     } else {
       $("studentName").textContent = "Not logged in";
     }
@@ -303,6 +323,8 @@ let cachedRegisteredTerm = null; // which term those registered courses belong t
     currentTerm = terms[currentIdx].code;
     buildEmptyCalendar();
     loadSchedule(currentTerm);
+    loadBannerPlans(currentTerm);
+    renderManualDraft();
   });
 })();
 
@@ -314,13 +336,331 @@ $("termSelect").addEventListener("change", (e) => {
   currentTerm = e.target.value;
   analysisResults = null;
   cachedRawData = null;
+  // Reset LLM conflict-avoidance cache (main)
   cachedRegisteredCourses = [];
   cachedRegisteredTerm = null;
-  conversationHistory = []; // reset chat context when term changes
+  conversationHistory = [];
   activeView = "registered";
+  // Reset manual builder state (Max)
+  bannerPlans = [];
+  registeredScheduleCache = {};
+  eligibleCourses = [];
+  expandedCourseKey = null;
+  selectedSectionByCourse = {};
+  manualDraft = [];
+  renderManualDraft();
+  renderEligibleList();
   renderSavedList();
   buildEmptyCalendar();
   loadSchedule(currentTerm);
+  loadBannerPlans(currentTerm);
+});
+
+// ============================================================
+// ELIGIBLE COURSES PICKER (Max's manual builder)
+// ============================================================
+
+function formatSectionOneLine(section, subject, courseNum) {
+  const crn = section.courseReferenceNumber || "?";
+  const sn = String(
+    section.sequenceNumber ?? section.sectionNumber ?? section.section ?? "?",
+  );
+  const mt = section.meetingsFaculty?.[0]?.meetingTime;
+  let timeStr = "";
+  if (mt) {
+    const days = [];
+    if (mt.monday) days.push("M");
+    if (mt.tuesday) days.push("T");
+    if (mt.wednesday) days.push("W");
+    if (mt.thursday) days.push("R");
+    if (mt.friday) days.push("F");
+    if (days.length && mt.beginTime)
+      timeStr = " · " + days.join("") + " " + mt.beginTime + "-" + mt.endTime;
+  }
+  const online = section.instructionalMethod === "INT" ? " · Online" : "";
+  const seats =
+    section.seatsAvailable != null
+      ? " · " + section.seatsAvailable + " seats"
+      : "";
+  return (
+    subject.toUpperCase() +
+    " " +
+    courseNum +
+    " §" +
+    sn +
+    " CRN " +
+    crn +
+    timeStr +
+    online +
+    seats
+  );
+}
+
+function renderEligibleList() {
+  const list = $("eligibleList");
+  const status = $("eligibleStatus");
+  if (!list) return;
+
+  if (!eligibleCourses || eligibleCourses.length === 0) {
+    list.innerHTML = "";
+    if (status)
+      status.textContent =
+        "Click Find to load your eligible courses for this term.";
+    return;
+  }
+
+  const seenKeys = new Set();
+  const dedupedCourses = eligibleCourses.filter((course) => {
+    const k = course.subject + "-" + course.courseNumber;
+    if (seenKeys.has(k)) return false;
+    seenKeys.add(k);
+    return true;
+  });
+
+  if (status)
+    status.textContent =
+      dedupedCourses.length +
+      " eligible courses — click one to pick a section.";
+  list.innerHTML = "";
+
+  dedupedCourses.forEach((course) => {
+    const key = course.subject + "-" + course.courseNumber;
+    const openCount = (course.sections || []).filter(
+      (s) => s.openSection,
+    ).length;
+    const totalCount = (course.sections || []).length;
+
+    const item = document.createElement("div");
+    item.className = "eligible-course";
+
+    const header = document.createElement("div");
+    header.className = "eligible-course-header";
+    header.innerHTML =
+      '<span class="eligible-name">' +
+      course.subject +
+      " " +
+      course.courseNumber +
+      '<span class="eligible-req"> — ' +
+      (course.label || "") +
+      "</span></span>" +
+      '<span class="eligible-meta">' +
+      openCount +
+      "/" +
+      totalCount +
+      " open</span>";
+
+    header.addEventListener("click", () => {
+      expandedCourseKey = expandedCourseKey === key ? null : key;
+      renderEligibleList();
+    });
+
+    item.appendChild(header);
+
+    if (expandedCourseKey === key) {
+      const body = document.createElement("div");
+      body.className = "eligible-course-body";
+
+      const seenCrns = new Set();
+      const sections = (course.sections || []).filter((s) => {
+        const crn = String(s.courseReferenceNumber || "");
+        if (!crn || seenCrns.has(crn)) return false;
+        seenCrns.add(crn);
+        return true;
+      });
+      const currentIdx = selectedSectionByCourse[key] ?? 0;
+
+      sections.forEach((s, i) => {
+        const lbl = document.createElement("label");
+        lbl.className = "manual-result-row";
+        lbl.innerHTML =
+          '<input type="radio" name="sec-' +
+          key +
+          '" data-idx="' +
+          i +
+          '" ' +
+          (i === currentIdx ? "checked" : "") +
+          "> " +
+          formatSectionOneLine(s, course.subject, course.courseNumber);
+        lbl.querySelector("input").addEventListener("change", () => {
+          selectedSectionByCourse[key] = i;
+        });
+        body.appendChild(lbl);
+      });
+
+      const addBtn = document.createElement("button");
+      addBtn.type = "button";
+      addBtn.className = "manual-small-btn";
+      addBtn.style.marginTop = "4px";
+      addBtn.textContent = "Add to draft";
+      addBtn.addEventListener("click", () => {
+        const idx = selectedSectionByCourse[key] ?? 0;
+        const section = sections[idx];
+        if (!section) return;
+        const crn = String(section.courseReferenceNumber || "");
+        if (!crn) {
+          $("statusBar").textContent = "Section has no CRN.";
+          return;
+        }
+        if (manualDraft.some((d) => d.key === crn)) {
+          $("statusBar").textContent =
+            "CRN " + crn + " is already in the draft.";
+          return;
+        }
+        manualDraft.push({
+          key: crn,
+          subject: course.subject,
+          courseNumber: course.courseNumber,
+          section,
+        });
+        renderManualDraft();
+        if (activeView === "draft") {
+          renderDraftOnCalendar();
+          renderSavedList();
+        }
+        $("statusBar").textContent =
+          "Added " +
+          course.subject +
+          " " +
+          course.courseNumber +
+          " (CRN " +
+          crn +
+          ") to draft.";
+      });
+
+      body.appendChild(addBtn);
+      item.appendChild(body);
+    }
+
+    list.appendChild(item);
+  });
+}
+
+function renderManualDraft() {
+  const ul = $("manualDraft");
+  if (!ul) return;
+  if (manualDraft.length === 0) {
+    ul.innerHTML =
+      '<li class="manual-hint" style="border:none;padding:2px 0">No sections yet.</li>';
+    return;
+  }
+  ul.innerHTML = "";
+  manualDraft.forEach((row) => {
+    const li = document.createElement("li");
+    const span = document.createElement("span");
+    span.textContent = formatSectionOneLine(
+      row.section,
+      row.subject,
+      row.courseNumber,
+    );
+    const rm = document.createElement("span");
+    rm.className = "rm";
+    rm.textContent = "remove";
+    const crnKey = row.key;
+    rm.addEventListener("click", () => {
+      manualDraft = manualDraft.filter((d) => d.key !== crnKey);
+      renderManualDraft();
+      if (activeView === "draft") {
+        renderDraftOnCalendar();
+        renderSavedList();
+      }
+    });
+    li.appendChild(span);
+    li.appendChild(rm);
+    ul.appendChild(li);
+  });
+}
+
+$("runAnalysisBtn").addEventListener("click", async () => {
+  if (!currentTerm) {
+    $("statusBar").textContent = "Select a term first.";
+    return;
+  }
+  // Reuse cached results if the chat already ran analysis for this term
+  if (analysisResults && (analysisResults.eligible || []).length > 0) {
+    eligibleCourses = analysisResults.eligible;
+    renderEligibleList();
+    return;
+  }
+  $("eligibleStatus").textContent =
+    "Analyzing your degree audit and searching Banner…";
+  $("eligibleList").innerHTML = "";
+  analysisResults = await runAnalysisAndWait();
+  cachedRawData = analysisResults;
+  eligibleCourses = analysisResults.eligible || [];
+  renderEligibleList();
+});
+
+$("manualSaveTxstBtn").addEventListener("click", async () => {
+  const planName = ($("manualPlanName").value || "").trim();
+  if (!planName) {
+    $("statusBar").textContent = "Enter a plan name.";
+    return;
+  }
+  if (!manualDraft.length) {
+    $("statusBar").textContent = "Add at least one section to the draft.";
+    return;
+  }
+  $("statusBar").textContent = "Saving to TXST…";
+  const resp = await sendToBackground({
+    action: "saveTxstPlan",
+    term: currentTerm,
+    planName,
+    rows: manualDraft.map((d) => ({
+      section: d.section,
+      subject: d.subject,
+      courseNumber: d.courseNumber,
+    })),
+  });
+  if (!resp.ok) {
+    $("statusBar").textContent = resp.error || "Save failed.";
+    return;
+  }
+
+  // Clear draft state after saving
+  manualDraft = [];
+  expandedCourseKey = null;
+  selectedSectionByCourse = {};
+  $("manualPlanName").value = "";
+  activeView = "registered";
+  setManualVisible(false);
+  renderManualDraft();
+  $("statusBar").textContent = "Saved: " + planName + ".";
+
+  // Reload from TXST so it shows up as a banner plan
+  await loadBannerPlans(currentTerm);
+});
+
+$("manualResetSessionBtn").addEventListener("click", () => {
+  manualDraft = [];
+  expandedCourseKey = null;
+  selectedSectionByCourse = {};
+  $("manualPlanName").value = "";
+  activeView = "registered";
+  setManualVisible(false);
+  renderManualDraft();
+  renderEligibleList();
+  renderSavedList();
+  loadSchedule(currentTerm);
+  $("statusBar").textContent = "Draft cleared.";
+});
+
+function setManualVisible(visible) {
+  const el = document.querySelector(".manual-section");
+  if (el) el.classList.toggle("visible", visible);
+}
+
+$("newDraftBtn").addEventListener("click", () => {
+  manualDraft = [];
+  expandedCourseKey = null;
+  selectedSectionByCourse = {};
+  $("manualPlanName").value = "";
+  activeView = "draft";
+  setManualVisible(true);
+  renderManualDraft();
+  renderEligibleList();
+  renderSavedList();
+  renderDraftOnCalendar();
+  $("manualPlanName").focus();
 });
 
 // ============================================================
@@ -334,10 +674,24 @@ $("viewRegistered").addEventListener("click", () => {
 });
 
 function loadSchedule(term) {
+  // Serve from UI cache if available
+  if (registeredScheduleCache[term]) {
+    const data = registeredScheduleCache[term];
+    // Keep LLM conflict-avoidance cache in sync
+    cachedRegisteredCourses = compressRegisteredForLLM(data);
+    cachedRegisteredTerm = term;
+    renderCoursesOnCalendar(data);
+    const unique = new Set(data.map((e) => e.crn));
+    $("statusBar").textContent = unique.size + " registered courses";
+    return;
+  }
+
   $("statusBar").textContent = "Loading schedule...";
   chrome.runtime.sendMessage({ action: "getSchedule", term: term }, (data) => {
+    if (activeView !== "registered" && activeView !== "draft") return;
     if (data && data.length > 0) {
-      // Cache registered courses — tag with term so we don't bleed across terms
+      // Populate both caches
+      registeredScheduleCache[term] = data;
       cachedRegisteredCourses = compressRegisteredForLLM(data);
       cachedRegisteredTerm = term;
       renderCoursesOnCalendar(data);
@@ -353,8 +707,17 @@ function loadSchedule(term) {
 }
 
 // ============================================================
-// SAVED SCHEDULES
+// SAVED SCHEDULES + BANNER PLANS
 // ============================================================
+
+async function loadBannerPlans(term) {
+  const plans = await sendToBackground({ action: "getAllBannerPlans", term });
+  if (Array.isArray(plans)) {
+    bannerPlans = plans;
+    renderSavedList();
+  }
+  $("statusBar").textContent = "Ready";
+}
 
 function renderSavedList() {
   const list = $("savedList");
@@ -363,13 +726,31 @@ function renderSavedList() {
   $("viewRegistered").className =
     activeView === "registered" ? "view-registered active" : "view-registered";
 
-  if (termSchedules.length === 0) {
+  list.innerHTML = "";
+
+  // Show active draft as first item if in draft mode
+  if (activeView === "draft") {
+    const draftItem = document.createElement("div");
+    draftItem.className = "saved-item active";
+    draftItem.innerHTML =
+      '<span class="name" style="font-style:italic">New Draft</span>' +
+      '<span class="info">' +
+      manualDraft.length +
+      " courses</span>";
+    list.appendChild(draftItem);
+  }
+
+  if (
+    termSchedules.length === 0 &&
+    bannerPlans.length === 0 &&
+    activeView !== "draft"
+  ) {
     list.innerHTML =
       '<div class="saved-empty" id="savedEmpty">No saved schedules for this term.</div>';
     return;
   }
 
-  list.innerHTML = "";
+  // Local AI-generated schedules
   termSchedules.forEach((schedule) => {
     const idx = savedSchedules.indexOf(schedule);
     const item = document.createElement("div");
@@ -383,7 +764,7 @@ function renderSavedList() {
       " courses</span>" +
       '<span class="delete-btn" data-idx="' +
       idx +
-      '">x</span>';
+      '">×</span>';
 
     item.addEventListener("click", (e) => {
       if (e.target.classList.contains("delete-btn")) return;
@@ -395,7 +776,85 @@ function renderSavedList() {
     list.appendChild(item);
   });
 
-  list.querySelectorAll(".delete-btn").forEach((btn) => {
+  // Banner (TXST) plans fetched from Plan Ahead
+  bannerPlans.forEach((plan, pi) => {
+    const bannerKey = "banner:" + pi;
+    const item = document.createElement("div");
+    item.className = "saved-item" + (activeView === bannerKey ? " active" : "");
+    item.innerHTML =
+      '<span class="banner-badge">TXST</span>' +
+      '<span class="name">' +
+      plan.name +
+      "</span>" +
+      '<span class="delete-btn txst-delete" title="Delete from TXST">×</span>';
+
+    // TXST delete handler
+    item.querySelector(".txst-delete").addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (!confirm('Delete "' + plan.name + '" from TXST and Bobcat Plus?'))
+        return;
+      $("statusBar").textContent = "Deleting " + plan.name + "…";
+      const resp = await sendToBackground({
+        action: "deleteTxstPlan",
+        term: currentTerm,
+        planIndex: plan.txstPlanIndex,
+      });
+      if (!resp.ok) {
+        $("statusBar").textContent =
+          "Delete failed: " + (resp.error || "unknown error");
+        return;
+      }
+      bannerPlans.splice(pi, 1);
+      if (activeView === bannerKey) {
+        activeView = "registered";
+        loadSchedule(currentTerm);
+      }
+      renderSavedList();
+      $("statusBar").textContent = plan.name + " deleted.";
+      setTimeout(() => loadBannerPlans(currentTerm), 1500);
+    });
+
+    // Click to view plan calendar
+    item.addEventListener("click", async (e) => {
+      if (e.target.classList.contains("delete-btn")) return;
+      activeView = bannerKey;
+      renderSavedList();
+
+      if (plan.events && plan.events.length > 0) {
+        renderCoursesOnCalendar(plan.events);
+        $("statusBar").textContent = "Viewing: " + plan.name;
+        return;
+      }
+
+      $("statusBar").textContent = "Loading " + plan.name + "…";
+      buildEmptyCalendar();
+
+      const events = await sendToBackground({
+        action: "fetchPlanCalendar",
+        term: currentTerm,
+        planCourses: plan.planCourses || [],
+      });
+
+      plan.events = events || [];
+
+      if (!plan.events.length) {
+        buildEmptyCalendar();
+        $("statusBar").textContent =
+          plan.name + ": no scheduled meeting times found.";
+        return;
+      }
+
+      if (activeView === bannerKey) {
+        renderCoursesOnCalendar(plan.events);
+        $("statusBar").textContent = "Viewing: " + plan.name;
+      }
+    });
+
+    list.appendChild(item);
+  });
+
+  // Delete handlers for local saved schedules
+  list.querySelectorAll(".delete-btn:not(.txst-delete)").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
       const idx = parseInt(btn.dataset.idx);
@@ -410,13 +869,68 @@ function renderSavedList() {
   });
 }
 
-function saveSchedule(name, courses) {
-  const schedule = { name, term: currentTerm, courses, created: Date.now() };
+function saveSchedule(name, courses, txstPlanNumber) {
+  const schedule = {
+    name,
+    term: currentTerm,
+    courses,
+    created: Date.now(),
+    txstPlanNumber: txstPlanNumber ?? null,
+  };
   savedSchedules.push(schedule);
   chrome.storage.local.set({ savedSchedules });
   activeView = savedSchedules.length - 1;
   renderSavedList();
   renderSavedScheduleOnCalendar(schedule);
+}
+
+function renderDraftOnCalendar() {
+  buildEmptyCalendar();
+  const dayMap = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4 };
+  for (const row of manualDraft) {
+    const mt = row.section?.meetingsFaculty?.[0]?.meetingTime;
+    if (!mt) continue;
+    const days = [];
+    if (mt.monday) days.push("Mon");
+    if (mt.tuesday) days.push("Tue");
+    if (mt.wednesday) days.push("Wed");
+    if (mt.thursday) days.push("Thu");
+    if (mt.friday) days.push("Fri");
+    if (!days.length || !mt.beginTime || !mt.endTime) continue;
+    const beginTime = mt.beginTime.slice(0, 2) + ":" + mt.beginTime.slice(2);
+    const endTime = mt.endTime.slice(0, 2) + ":" + mt.endTime.slice(2);
+    const [bh, bm] = beginTime.split(":").map(Number);
+    const [eh, em] = endTime.split(":").map(Number);
+    const startOffset = (bm / 60) * 40;
+    const height = (eh + em / 60 - (bh + bm / 60)) * 40;
+    const timeStr = formatTime24to12(bh, bm) + " - " + formatTime24to12(eh, em);
+    for (const day of days) {
+      const dayIdx = dayMap[day];
+      if (dayIdx === undefined) continue;
+      const cell = $("cell-" + dayIdx + "-" + bh);
+      if (!cell) continue;
+      const block = document.createElement("div");
+      block.className = "course-block";
+      block.style.top = startOffset + "px";
+      block.style.height = height + "px";
+      block.innerHTML =
+        '<div class="course-title">' +
+        row.subject +
+        " " +
+        row.courseNumber +
+        "</div>" +
+        '<div class="course-time">' +
+        timeStr +
+        "</div>" +
+        '<div class="course-time">CRN: ' +
+        row.key +
+        "</div>";
+      cell.appendChild(block);
+    }
+  }
+  $("statusBar").textContent = manualDraft.length
+    ? "Draft: " + manualDraft.length + " course(s) — add more or save."
+    : "Draft is empty — pick courses from the list below.";
 }
 
 function renderSavedScheduleOnCalendar(schedule) {
@@ -449,15 +963,16 @@ function renderSavedScheduleOnCalendar(schedule) {
       const cell = $("cell-" + dayIdx + "-" + bh);
       if (!cell) continue;
 
+      const courseKey = (course.subject || "") + (course.courseNumber || "");
       const block = document.createElement("div");
-      block.className = "course-block";
+      block.className = "course-block " + getChipForCourse(courseKey);
       block.style.top = startOffset + "px";
       block.style.height = height + "px";
       block.innerHTML =
         '<div class="course-title">' +
-        course.subject +
+        (course.subject || "") +
         " " +
-        course.courseNumber +
+        (course.courseNumber || "") +
         "</div>" +
         '<div class="course-time">' +
         timeStr +
@@ -551,7 +1066,6 @@ function formatTime24to12(h, m) {
   return h12 + ":" + String(m).padStart(2, "0") + " " + ampm;
 }
 
-// Convert "1230" string → "12:30 PM" for chat display
 function formatChatTime(t) {
   if (!t) return "";
   const h = parseInt(t.slice(0, 2));
@@ -559,13 +1073,11 @@ function formatChatTime(t) {
   return formatTime24to12(h, parseInt(m));
 }
 
-// Convert "1230" string → total minutes (750) for easy comparison
 function timeStrToMinutes(t) {
   if (!t) return null;
   return parseInt(t.slice(0, 2)) * 60 + parseInt(t.slice(2));
 }
 
-// Returns true if two sections overlap on any shared day
 function sectionsConflict(a, b) {
   if (!a.days || !b.days || !a.start || !b.start) return false;
   const sharedDays = a.days.filter((d) => b.days.includes(d));
@@ -578,7 +1090,7 @@ function sectionsConflict(a, b) {
 }
 
 // Returns the first conflicting pair {a, b} or null if clean
-// Also checks against already-registered courses
+// Also checks against already-registered courses (main's version)
 function findFirstConflict(courses) {
   // Check within the proposed schedule
   for (let i = 0; i < courses.length; i++) {
@@ -591,7 +1103,6 @@ function findFirstConflict(courses) {
   // Check against registered courses — only if same term
   if (cachedRegisteredTerm === currentTerm) {
     for (const proposed of courses) {
-      // Skip if this course IS a registered course (LLM sometimes echoes them back)
       if (cachedRegisteredCourses.some((r) => r.crn === proposed.crn)) continue;
       for (const registered of cachedRegisteredCourses) {
         if (sectionsConflict(proposed, registered)) {
@@ -711,7 +1222,7 @@ async function sendChat() {
 
     conversationHistory.push({ role: "user", content: userMessage });
 
-    // Step 4: call OpenAI with up to 2 retry attempts if conflicts are found
+    // Step 4: call OpenAI with up to 3 retry attempts if conflicts are found
     let validSchedules = [];
     let attempts = 0;
     const MAX_ATTEMPTS = 3;
@@ -720,7 +1231,6 @@ async function sendChat() {
     while (validSchedules.length === 0 && attempts < MAX_ATTEMPTS) {
       attempts++;
 
-      // On retry turns, append a correction message explaining exactly what was wrong
       if (attempts > 1) {
         const conflictDetails = lastConflictDetails
           .map(
@@ -767,7 +1277,7 @@ async function sendChat() {
 
       // Step 5: validate conflicts
       const conflicted = [];
-      lastConflictDetails = []; // reset each attempt
+      lastConflictDetails = [];
       for (const schedule of result.schedules) {
         const conflict = findFirstConflict(schedule.courses);
         if (conflict) {
@@ -794,11 +1304,9 @@ async function sendChat() {
         attempts < MAX_ATTEMPTS
       ) {
         $("statusBar").textContent = `Conflicts found, retrying...`;
-        // lastConflictDetails is used on next loop iteration
         continue;
       }
 
-      // Render whatever is valid
       if (conflicted.length > 0) {
         addMessage(
           "system",
@@ -819,7 +1327,7 @@ async function sendChat() {
         addMessage("ai", result.followUpQuestion);
       }
 
-      break; // success or gave up
+      break;
     }
 
     $("statusBar").textContent = "Ready";
@@ -834,7 +1342,7 @@ async function sendChat() {
 function addScheduleOption(schedule) {
   const { name, rationale, totalCredits, courses } = schedule;
 
-  // Convert LLM format -> format renderSavedScheduleOnCalendar expects (new courses only)
+  // Convert LLM format → format renderSavedScheduleOnCalendar expects (new courses only)
   const calendarCourses = courses.map((c) => ({
     subject: c.course.split(" ")[0],
     courseNumber: c.course.split(" ")[1],
@@ -855,7 +1363,7 @@ function addScheduleOption(schedule) {
   }));
   const fullCalendarCourses = [...registeredAsCalendar, ...calendarCourses];
 
-  // Show already-registered courses at top of chat bubble so the full picture is clear
+  // Show already-registered courses at top of chat bubble
   const registeredLines = cachedRegisteredCourses
     .map((r) => {
       const time = r.days
@@ -866,7 +1374,7 @@ function addScheduleOption(schedule) {
           formatChatTime(r.end)
         : "Online";
       return (
-        '<div style="margin:4px 0;opacity:0.6;border-left:2px solid #aaa;padding-left:6px">' +
+        '<div style="margin:4px 0;opacity:0.6;border-left:2px solid var(--border);padding-left:6px">' +
         "<strong>" +
         r.course +
         "</strong> - " +
@@ -965,7 +1473,7 @@ function runAnalysisAndWait() {
     };
 
     chrome.runtime.onMessage.addListener(listener);
-    chrome.runtime.sendMessage({ action: "runAnalysis" });
+    chrome.runtime.sendMessage({ action: "runAnalysis", term: currentTerm });
   });
 }
 
@@ -987,19 +1495,34 @@ function addMessage(type, text) {
 // ============================================================
 // COURSE COLOR SYSTEM
 // ============================================================
-const TXST_CHIPS = ["chip-0","chip-1","chip-2","chip-3","chip-4","chip-5","chip-6","chip-7"];
+const TXST_CHIPS = [
+  "chip-0",
+  "chip-1",
+  "chip-2",
+  "chip-3",
+  "chip-4",
+  "chip-5",
+  "chip-6",
+  "chip-7",
+];
 
 function getCourseColors() {
-  try { return JSON.parse(localStorage.getItem("bobcat_course_colors") || "{}"); } catch(e) { return {}; }
+  try {
+    return JSON.parse(localStorage.getItem("bobcat_course_colors") || "{}");
+  } catch (e) {
+    return {};
+  }
 }
 function saveCourseColors(map) {
-  try { localStorage.setItem("bobcat_course_colors", JSON.stringify(map)); } catch(e) {}
+  try {
+    localStorage.setItem("bobcat_course_colors", JSON.stringify(map));
+  } catch (e) {}
 }
 function getChipForCourse(courseKey) {
   const map = getCourseColors();
   if (!map[courseKey]) {
     const used = Object.values(map);
-    const available = TXST_CHIPS.filter(c => !used.includes(c));
+    const available = TXST_CHIPS.filter((c) => !used.includes(c));
     const pool = available.length > 0 ? available : TXST_CHIPS;
     map[courseKey] = pool[Math.floor(Math.random() * pool.length)];
     saveCourseColors(map);
@@ -1016,11 +1539,12 @@ function updateWeekHours(events) {
   for (const ev of events) {
     if (!ev.crn || seen.has(ev.crn)) continue;
     seen.add(ev.crn);
-    totalHours += (ev.creditHours || ev.credits || 3);
+    totalHours += ev.creditHours || ev.credits || 3;
   }
   const el = document.getElementById("weekHours");
   if (el && totalHours > 0) {
-    el.innerHTML = "<strong>" + totalHours + " credit hours</strong> this semester";
+    el.innerHTML =
+      "<strong>" + totalHours + " credit hours</strong> this semester";
   }
 }
 
@@ -1034,18 +1558,27 @@ function updateOverviewFromEvents(events) {
   for (const ev of events) {
     if (seen.has(ev.crn)) continue;
     seen.add(ev.crn);
-    if (ev.registrationStatus && ev.registrationStatus.toLowerCase().includes("wait")) {
+    if (
+      ev.registrationStatus &&
+      ev.registrationStatus.toLowerCase().includes("wait")
+    ) {
       waitlisted.push(ev);
     } else {
       courses.push(ev);
     }
   }
   const totalCourses = courses.length + waitlisted.length;
-  const totalHours = [...courses, ...waitlisted].reduce((sum, c) => sum + (c.creditHours || c.credits || 3), 0);
+  const totalHours = [...courses, ...waitlisted].reduce(
+    (sum, c) => sum + (c.creditHours || c.credits || 3),
+    0,
+  );
   let onTrackLabel = "";
-  if (totalHours >= 15) onTrackLabel = '<span class="ov-badge ov-green">Ahead of pace</span>';
-  else if (totalHours >= 12) onTrackLabel = '<span class="ov-badge ov-blue">On track</span>';
-  else if (totalHours > 0) onTrackLabel = '<span class="ov-badge ov-amber">Light semester</span>';
+  if (totalHours >= 15)
+    onTrackLabel = '<span class="ov-badge ov-green">Ahead of pace</span>';
+  else if (totalHours >= 12)
+    onTrackLabel = '<span class="ov-badge ov-blue">On track</span>';
+  else if (totalHours > 0)
+    onTrackLabel = '<span class="ov-badge ov-amber">Light semester</span>';
 
   const panel = document.getElementById("overviewPanel");
   if (!panel) return;
@@ -1057,11 +1590,15 @@ function updateOverviewFromEvents(events) {
         <div class="ov-label">Courses registered</div>
         <div class="ov-sub">${totalHours} credit hours ${onTrackLabel}</div>
       </div>
-      ${waitlisted.length > 0 ? `
+      ${
+        waitlisted.length > 0
+          ? `
       <div class="ov-stat">
         <div class="ov-val ov-red">${waitlisted.length}</div>
         <div class="ov-label">Waitlisted</div>
-      </div>` : ""}
+      </div>`
+          : ""
+      }
     </div>
     <div class="ov-divider"></div>
     <div class="ov-row">
@@ -1106,16 +1643,22 @@ document.addEventListener("DOMContentLoaded", () => {
   const navRegister = document.getElementById("navRegister");
   const navAudit = document.getElementById("navAudit");
 
-  if (navRegister) navRegister.addEventListener("click", (e) => {
-    e.preventDefault();
-    chrome.tabs.create({ url: "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/classRegistration" });
-    closeSidebar();
-  });
-  if (navAudit) navAudit.addEventListener("click", (e) => {
-    e.preventDefault();
-    chrome.tabs.create({ url: "https://dw-prod.ec.txstate.edu/responsiveDashboard/worksheets/WEB31" });
-    closeSidebar();
-  });
+  if (navRegister)
+    navRegister.addEventListener("click", (e) => {
+      e.preventDefault();
+      chrome.tabs.create({
+        url: "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/classRegistration",
+      });
+      closeSidebar();
+    });
+  if (navAudit)
+    navAudit.addEventListener("click", (e) => {
+      e.preventDefault();
+      chrome.tabs.create({
+        url: "https://dw-prod.ec.txstate.edu/responsiveDashboard/worksheets/WEB31",
+      });
+      closeSidebar();
+    });
 
   const toggle = document.getElementById("overviewToggle");
   if (toggle) toggle.addEventListener("click", toggleOverview);

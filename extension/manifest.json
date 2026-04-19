@@ -3,7 +3,7 @@
   "name": "Bobcat Plus",
   "version": "1.0.0",
   "description": "AI-powered schedule planner for Texas State University",
-  "permissions": ["storage", "tabs"],
+  "permissions": ["storage", "tabs", "windows"],
   "host_permissions": [
     "https://dw-prod.ec.txstate.edu/*",
     "https://reg-prod.ec.txstate.edu/*",
