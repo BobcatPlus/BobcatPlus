@@ -114,6 +114,8 @@ let analysisResults = null;
 let eligibleAnalysisSeq = 0;
 let savedSchedules = [];
 let conversationHistory = [];
+let cachedOverviewEvents = [];
+let degreeAuditSnapshot = null;
 let cachedRawData = null;
 let cachedRegisteredCourses = [];
 let cachedRegisteredTerm = null;
@@ -182,12 +184,90 @@ function dbgLog(location, message, data, hypothesisId) {
 
 (async () => {
   const reloadMark = sessionStorage.getItem("bobcat_dbg_post_login_reload");
-  if (reloadMark) { sessionStorage.removeItem("bobcat_dbg_post_login_reload"); dbgLog("tab.js:init", "tab loaded after post-login location.reload", { reloadMark }, "H2-verify"); }
+  if (reloadMark) {
+    sessionStorage.removeItem("bobcat_dbg_post_login_reload");
+    dbgLog(
+      "tab.js:init",
+      "tab loaded after post-login location.reload",
+      { reloadMark },
+      "H2-verify",
+    );
+  }
 
-  chrome.runtime.sendMessage({ action: "getStudentInfo" }, (student) => {
-    if (student) applyStudentInfoToUI(student);
-    else $("studentName").textContent = "Not logged in";
-  });
+  chrome.runtime.sendMessage(
+    { action: "getDegreeAuditOverview" },
+    (auditData) => {
+      const lastErr =
+        typeof chrome !== "undefined" && chrome.runtime?.lastError
+          ? chrome.runtime.lastError.message
+          : "";
+      // #region agent log
+      fetch(
+        "http://127.0.0.1:7750/ingest/853901e6-d4c8-4b6b-b2a7-9b1a93c88eb5",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Debug-Session-Id": "782a56",
+          },
+          body: JSON.stringify({
+            sessionId: "782a56",
+            location: "tab.js:init:getDegreeAuditOverview callback",
+            message: "overview message response",
+            data: {
+              lastErrorLen: lastErr ? String(lastErr).length : 0,
+              hasPayload: auditData != null,
+              hasName: !!(auditData && auditData.name),
+            },
+            timestamp: Date.now(),
+            hypothesisId: "A",
+            runId: "pre-fix",
+          }),
+        },
+      ).catch(() => {});
+      // #endregion
+      if (auditData && auditData.name) {
+        applyStudentInfoToUI(auditData);
+        degreeAuditSnapshot = auditData;
+        updateOverviewFromEvents([]);
+      } else {
+        chrome.runtime.sendMessage({ action: "getStudentInfo" }, (student) => {
+          // #region agent log
+          fetch(
+            "http://127.0.0.1:7750/ingest/853901e6-d4c8-4b6b-b2a7-9b1a93c88eb5",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Debug-Session-Id": "782a56",
+              },
+              body: JSON.stringify({
+                sessionId: "782a56",
+                location: "tab.js:init:getStudentInfo fallback",
+                message: "fallback after overview null",
+                data: {
+                  hasStudent: student != null,
+                  clearSnapshot: true,
+                },
+                timestamp: Date.now(),
+                hypothesisId: "D",
+                runId: "pre-fix",
+              }),
+            },
+          ).catch(() => {});
+          // #endregion
+          if (student) {
+            applyStudentInfoToUI(student);
+            degreeAuditSnapshot = null;
+          } else {
+            $("studentName").textContent = "Not logged in";
+            degreeAuditSnapshot = null;
+          }
+          updateOverviewFromEvents([]);
+        });
+      }
+    },
+  );
 
   chrome.storage.local.get("savedSchedules", (result) => {
     if (result.savedSchedules) savedSchedules = result.savedSchedules;
@@ -195,27 +275,44 @@ function dbgLog(location, message, data, hypothesisId) {
   });
 
   chrome.runtime.sendMessage({ action: "getTerms" }, (terms) => {
-    if (!terms || !terms.length) { const sb = $("statusBar"); if (sb) sb.textContent = "Could not load terms. Reload and try again."; return; }
+    if (!terms || terms.length === 0) return;
     const select = $("termSelect");
+
     const now = new Date();
     let currentIdx = 0;
     for (let i = 0; i < terms.length; i++) {
-      const m = terms[i].description.match(/(\d{2}-[A-Z]{3}-\d{4})/);
-      if (m && new Date(m[1]) <= now) { currentIdx = i; break; }
+      const dateMatch = terms[i].description.match(/(\d{2}-[A-Z]{3}-\d{4})/);
+      if (dateMatch) {
+        const startDate = new Date(dateMatch[1]);
+        if (startDate <= now) {
+          currentIdx = i;
+          break;
+        }
+      }
     }
+
     terms.forEach((t, i) => {
       const opt = document.createElement("option");
-      opt.value = t.code; opt.textContent = t.description;
+      opt.value = t.code;
+      opt.textContent = t.description;
       if (i === currentIdx) opt.selected = true;
       select.appendChild(opt);
     });
+
     currentTerm = terms[currentIdx].code;
     buildEmptyCalendar();
-    setPanelMode("build");
+    renderManualDraft();
+
     (async () => {
       const ok = await checkAuth();
-      if (ok) { await loadSchedule(currentTerm); await loadBannerPlans(currentTerm); autoLoadEligibleCourses(); }
-      else { $("statusBar").textContent = "Use Import Schedule to sign in and load your registration."; await loadBannerPlans(currentTerm); }
+      if (ok) {
+        await loadSchedule(currentTerm);
+        await loadBannerPlans(currentTerm); // session is warm after loadSchedule
+      } else {
+        $("statusBar").textContent =
+          "Use Import Schedule to sign in and load your registration.";
+        await loadBannerPlans(currentTerm); // still try — plans don't need registration session
+      }
     })();
   });
 })();
@@ -252,6 +349,589 @@ function setPanelMode(mode) {
   if (aiPanel) aiPanel.style.display = mode === "ai" ? "flex" : "none";
   renderEligibleList();
   renderSavedList();
+}
+
+
+
+// ============================================================
+// SIMONE'S FEATURES — overview panel, draft render, metadata helpers
+// ============================================================
+
+function extractMetaFromDraftRow(row) {
+  const sec = row.section;
+  const crn = String(row.key || "");
+  const subject = row.subject || "";
+  const courseNumber = row.courseNumber || "";
+  const courseCode = (subject + " " + courseNumber).trim();
+  const sn =
+    sec?.sequenceNumber ?? sec?.sectionNumber ?? sec?.section ?? "?";
+
+  let prof = "";
+  const f0 = sec?.faculty?.[0];
+  if (f0?.displayName && f0.displayName !== "Faculty, Unassigned")
+    prof = f0.displayName;
+
+  const im = sec?.instructionalMethod || "";
+  const mt = sec?.meetingsFaculty?.[0]?.meetingTime;
+  let location = "—";
+  if (mt) {
+    const bits = [
+      mt.buildingDescription,
+      mt.building,
+      mt.room,
+      mt.campusDescription,
+    ].filter(Boolean);
+    if (bits.length) location = bits.join(" · ");
+  }
+  if (
+    (im === "INT" || String(im).toUpperCase() === "INT") &&
+    location === "—"
+  )
+    location = "Online";
+
+  return {
+    crn,
+    courseCode,
+    subject,
+    courseNumber,
+    title: sec?.courseTitle || sec?.courseDescription || "—",
+    section: String(sn),
+    professor: prof || "—",
+    location,
+    instructionalMethod: formatInstructionalMethodLabel(im),
+    meetingTimeDisplay: "",
+  };
+}
+
+function extractMetaFromSavedCourse(course) {
+  return {
+    crn: String(course.crn || ""),
+    courseCode: (
+      String(course.subject || "").trim() +
+      " " +
+      String(course.courseNumber || "").trim()
+    ).trim(),
+    subject: course.subject || "",
+    courseNumber: course.courseNumber || "",
+    title: course.title || "—",
+    section:
+      course.section != null && course.section !== ""
+        ? String(course.section)
+        : "—",
+    professor: course.instructor || "—",
+    location: course.location || "—",
+    instructionalMethod:
+      course.instructionalMethod ||
+      formatInstructionalMethodLabel(course.method) ||
+      "—",
+    meetingTimeDisplay: "",
+  };
+}
+
+function firstOverviewGpaField(snap, student, keys) {
+  for (const k of keys) {
+    if (snap && snap[k] != null && snap[k] !== "") return snap[k];
+  }
+  for (const k of keys) {
+    if (student && student[k] != null && student[k] !== "") return student[k];
+  }
+  return undefined;
+}
+
+function fmtOverviewGpa(raw) {
+  if (raw == null || raw === "") return "—";
+  let v = raw;
+  if (typeof raw === "object" && raw !== null) {
+    v =
+      raw.value ??
+      raw.amount ??
+      raw.numericValue ??
+      raw.gpa ??
+      raw.number;
+    if (v == null || v === "") return "—";
+  }
+  const x = parseFloat(
+    String(v)
+      .replace(/,/g, "")
+      .replace(/\u00a0|\u202f/g, "")
+      .trim(),
+  );
+  return Number.isFinite(x) ? x.toFixed(2) : "—";
+}
+
+function normalizeInstructionalMethodRaw(ev, imVal) {
+  if (imVal != null && typeof imVal === "object") {
+    return (
+      imVal.description ||
+      imVal.longDescription ||
+      imVal.label ||
+      imVal.code ||
+      imVal.key ||
+      ""
+    );
+  }
+  return (
+    imVal ||
+    pickFirstStr(
+      ev.scheduleTypeDescription,
+      ev.scheduleType,
+      ev.partOfTermDescription,
+      ev.courseInstructionalMethodDescription,
+    )
+  );
+}
+
+function normalizeRegistrationEventsPayload(payload) {
+  if (payload == null) return [];
+  const root = unwrapExtDirectTabPayload(payload);
+  if (Array.isArray(root)) return root;
+  if (Array.isArray(root?.data)) return root.data;
+  if (Array.isArray(root?.events)) return root.events;
+  if (Array.isArray(root?.registrationEvents)) return root.registrationEvents;
+  if (Array.isArray(root?.rows)) return root.rows;
+  if (Array.isArray(payload?.data)) return payload.data;
+  return [];
+}
+
+function refreshDegreeAuditOverview() {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ action: "getDegreeAuditOverview" }, (data) => {
+      const lastErr =
+        typeof chrome !== "undefined" && chrome.runtime?.lastError
+          ? chrome.runtime.lastError.message
+          : "";
+      // #region agent log
+      fetch(
+        "http://127.0.0.1:7750/ingest/853901e6-d4c8-4b6b-b2a7-9b1a93c88eb5",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Debug-Session-Id": "782a56",
+          },
+          body: JSON.stringify({
+            sessionId: "782a56",
+            location: "tab.js:refreshDegreeAuditOverview",
+            message: "refresh overview response",
+            data: {
+              lastErrorLen: lastErr ? String(lastErr).length : 0,
+              appliedSnapshot: !!(data && data.name),
+            },
+            timestamp: Date.now(),
+            hypothesisId: "A",
+            runId: "pre-fix",
+          }),
+        },
+      ).catch(() => {});
+      // #endregion
+      if (data && data.name) {
+        degreeAuditSnapshot = data;
+        currentStudent = data;
+        applyStudentInfoToUI(data);
+      }
+      renderOverviewPanel();
+      resolve();
+    });
+  });
+}
+
+function renderCoursesOnCalendar(events) {
+  buildEmptyCalendar();
+  const expandedEvents = (events || []).map(expandRegistrationEvent);
+  updateWeekHours(expandedEvents);
+  updateOverviewFromEvents(expandedEvents);
+  const mergedByCrn = groupRegistrationEventsByCrn(expandedEvents);
+  const seen = new Set();
+  for (const event of expandedEvents) {
+    const startDate = new Date(event.start);
+    const endDate = new Date(event.end);
+    const dayIdx = startDate.getDay() - 1;
+    if (dayIdx < 0 || dayIdx > 4) continue;
+
+    const key = event.crn + "-" + dayIdx;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const bh = startDate.getHours(),
+      bm = startDate.getMinutes();
+    const eh = endDate.getHours(),
+      em = endDate.getMinutes();
+    const startOffset = (bm / 60) * 52;
+    const height = (eh + em / 60 - (bh + bm / 60)) * 52;
+    const timeStr = formatTime24to12(bh, bm) + " - " + formatTime24to12(eh, em);
+
+    const cell = $("cell-" + dayIdx + "-" + bh);
+    if (!cell) continue;
+
+    const courseKey = event.subject + event.courseNumber;
+    const block = document.createElement("div");
+    block.className = "course-block " + getChipForCourse(courseKey);
+    block.setAttribute("data-course-key", courseKey);
+    const crnKey = String(
+      event.crn ?? event.courseReferenceNumber ?? "",
+    ).trim();
+    block.setAttribute("data-crn", crnKey);
+    block.style.top = startOffset + "px";
+    block.style.height = height + "px";
+    block.innerHTML =
+      '<div class="course-title">' +
+      event.subject +
+      " " +
+      event.courseNumber +
+      "</div>" +
+      '<div class="course-time">' +
+      timeStr +
+      "</div>" +
+      '<div class="course-time">' +
+      event.title +
+      "</div>";
+    const mergedEv =
+      (crnKey && mergedByCrn.get(crnKey)) || event;
+    const meta = extractMetaFromRegistrationEvent(mergedEv);
+    meta.meetingTimeDisplay = timeStr;
+    if (crnKey) registerCourseMeta(crnKey, meta);
+    cell.appendChild(block);
+  }
+}
+
+function renderDraftOnCalendar() {
+  buildEmptyCalendar();
+  const dayMap = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4 };
+  for (const row of manualDraft) {
+    const mt = row.section?.meetingsFaculty?.[0]?.meetingTime;
+    if (!mt) continue;
+    const days = [];
+    if (mt.monday) days.push("Mon");
+    if (mt.tuesday) days.push("Tue");
+    if (mt.wednesday) days.push("Wed");
+    if (mt.thursday) days.push("Thu");
+    if (mt.friday) days.push("Fri");
+    if (!days.length || !mt.beginTime || !mt.endTime) continue;
+    const beginTime = mt.beginTime.slice(0, 2) + ":" + mt.beginTime.slice(2);
+    const endTime = mt.endTime.slice(0, 2) + ":" + mt.endTime.slice(2);
+    const [bh, bm] = beginTime.split(":").map(Number);
+    const [eh, em] = endTime.split(":").map(Number);
+    const startOffset = (bm / 60) * 52;
+    const height = (eh + em / 60 - (bh + bm / 60)) * 52;
+    const timeStr = formatTime24to12(bh, bm) + " - " + formatTime24to12(eh, em);
+    for (const day of days) {
+      const dayIdx = dayMap[day];
+      if (dayIdx === undefined) continue;
+      const cell = $("cell-" + dayIdx + "-" + bh);
+      if (!cell) continue;
+      const block = document.createElement("div");
+      block.className = "course-block";
+      block.style.top = startOffset + "px";
+      block.style.height = height + "px";
+      block.innerHTML =
+        '<div class="course-title">' +
+        row.subject +
+        " " +
+        row.courseNumber +
+        "</div>" +
+        '<div class="course-time">' +
+        timeStr +
+        "</div>" +
+        '<div class="course-time">CRN: ' +
+        row.key +
+        "</div>";
+      const meta = extractMetaFromDraftRow(row);
+      meta.meetingTimeDisplay = timeStr;
+      registerCourseMeta(row.key, meta);
+      block.setAttribute("data-crn", row.key);
+      cell.appendChild(block);
+    }
+  }
+  $("statusBar").textContent = manualDraft.length
+    ? "Draft: " + manualDraft.length + " course(s) — add more or save."
+    : "Draft is empty — pick courses from the list below.";
+}
+
+function saveSchedule(name, courses, txstPlanNumber) {
+  const schedule = {
+    name,
+    term: currentTerm,
+    courses,
+    created: Date.now(),
+    txstPlanNumber: txstPlanNumber ?? null,
+  };
+  savedSchedules.push(schedule);
+  chrome.storage.local.set({ savedSchedules });
+  activeView = savedSchedules.length - 1;
+  renderSavedList();
+  renderSavedScheduleOnCalendar(schedule);
+}
+
+function scanSnapshotForOverallGpa(obj) {
+  if (!obj || typeof obj !== "object") return undefined;
+  let cum;
+  const take = (k, v) => {
+    if (v == null || v === "" || typeof v === "object") return;
+    if (!/gpa/i.test(k)) return;
+    const x = parseFloat(
+      String(v)
+        .replace(/,/g, "")
+        .replace(/\u00a0|\u202f/g, "")
+        .trim(),
+    );
+    if (!Number.isFinite(x) || x < 0 || x > 4.5) return;
+    const kl = k.toLowerCase();
+    if (
+      /overall|cumulative|career|degree|program|comb|total|^gpa$/i.test(kl) ||
+      (/gpa/i.test(kl) && !/institut|txst|banner|resident|inst\.?\s*gpa/.test(kl))
+    ) {
+      if (cum === undefined) cum = v;
+    }
+  };
+  for (const [k, v] of Object.entries(obj)) {
+    take(k, v);
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      for (const [k2, v2] of Object.entries(v)) {
+        take(k + "." + k2, v2);
+      }
+    }
+  }
+  if (cum === undefined) {
+    for (const [k, v] of Object.entries(obj)) {
+      if (/\bgpa\b/i.test(k) && v != null && v !== "" && typeof v !== "object") {
+        const x = parseFloat(String(v).replace(/,/g, "").trim());
+        if (Number.isFinite(x) && x >= 0 && x <= 4.5) {
+          cum = v;
+          break;
+        }
+      }
+    }
+  }
+  return cum;
+}
+
+function setManualVisible(visible) {
+  const el = document.querySelector(".manual-section");
+  if (el) el.classList.toggle("visible", visible);
+}
+
+function unwrapExtDirectTabPayload(payload) {
+  if (payload != null && typeof payload === "object" && "result" in payload) {
+    return payload.result;
+  }
+  return payload;
+}
+
+
+
+// ============================================================
+// SIMONE'S FEATURES — overview panel, draft render, metadata helpers
+// ============================================================
+
+function closeSidebar() {
+    if (sidebar) sidebar.classList.remove("open");
+    if (overlay) overlay.classList.remove("active");
+  }
+
+function openSidebar() {
+    if (sidebar) sidebar.classList.add("open");
+    if (overlay) overlay.classList.add("active");
+  }
+
+function renderManualDraft() {
+  const ul = $("manualDraft");
+  if (!ul) return;
+  if (manualDraft.length === 0) {
+    ul.innerHTML =
+      '<li class="manual-hint" style="border:none;padding:2px 0">No sections yet.</li>';
+    return;
+  }
+  ul.innerHTML = "";
+  manualDraft.forEach((row) => {
+    const li = document.createElement("li");
+    const span = document.createElement("span");
+    span.textContent = formatSectionOneLine(
+      row.section,
+      row.subject,
+      row.courseNumber,
+    );
+    const rm = document.createElement("span");
+    rm.className = "rm";
+    rm.textContent = "remove";
+    const crnKey = row.key;
+    rm.addEventListener("click", () => {
+      manualDraft = manualDraft.filter((d) => d.key !== crnKey);
+      renderManualDraft();
+      if (activeView === "draft") {
+        renderDraftOnCalendar();
+        renderSavedList();
+      }
+    });
+    li.appendChild(span);
+    li.appendChild(rm);
+    ul.appendChild(li);
+  });
+}
+
+function renderOverviewPanel() {
+  const events = cachedOverviewEvents;
+  const seen = new Set();
+  const courses = [];
+  const waitlisted = [];
+  for (const ev of events) {
+    if (seen.has(ev.crn)) continue;
+    seen.add(ev.crn);
+    if (
+      ev.registrationStatus &&
+      ev.registrationStatus.toLowerCase().includes("wait")
+    ) {
+      waitlisted.push(ev);
+    } else {
+      courses.push(ev);
+    }
+  }
+  const totalCourses = courses.length + waitlisted.length;
+  const totalHours = [...courses, ...waitlisted].reduce(
+    (sum, c) => sum + (c.creditHours || c.credits || 3),
+    0,
+  );
+
+  let onTrackLabel = "";
+  if (totalHours >= 15)
+    onTrackLabel = '<span class="ov-badge ov-green">Ahead of pace</span>';
+  else if (totalHours >= 12)
+    onTrackLabel = '<span class="ov-badge ov-blue">On track</span>';
+  else if (totalHours > 0)
+    onTrackLabel = '<span class="ov-badge ov-amber">Light semester</span>';
+
+  const snap = degreeAuditSnapshot;
+  let pct =
+    snap && snap.progressPercent != null
+      ? Math.min(100, Math.max(0, Number(snap.progressPercent)))
+      : null;
+  if (pct != null && !Number.isFinite(pct)) pct = null;
+
+  const circumference = 2 * Math.PI * 20;
+  const dash =
+    pct != null ? (pct / 100) * circumference : 0;
+
+  const classification =
+    (snap && snap.classification && String(snap.classification).trim()) ||
+    (currentStudent &&
+      String(currentStudent.classification || "").trim()) ||
+    "";
+
+  const req =
+    snap && snap.creditsRequiredMajorMinor != null
+      ? snap.creditsRequiredMajorMinor
+      : null;
+  const earned =
+    snap && snap.creditsEarnedMajorMinor != null
+      ? snap.creditsEarnedMajorMinor
+      : null;
+  const hasMinor = !!(snap && snap.hasMinor);
+
+  let progressCaption = "";
+  if (pct != null) {
+    progressCaption =
+      earned != null && req != null
+        ? earned +
+          " / " +
+          req +
+          " cr toward degree" +
+          (hasMinor ? " · minor on record" : "")
+        : "Degree Works requirement totals";
+  } else {
+    progressCaption = "Degree progress unavailable (open Degree Works)";
+  }
+
+  let rawOv = firstOverviewGpaField(snap, currentStudent, [
+    "gpaOverall",
+    "cumulativeGPA",
+    "cumulativeGpa",
+    "overallGPA",
+    "overallGpa",
+    "gpaTexasState",
+    "institutionalGPA",
+    "gpa",
+  ]);
+  if (rawOv == null) {
+    rawOv = scanSnapshotForOverallGpa(snap);
+  }
+  const gpaOv = fmtOverviewGpa(rawOv);
+  const ringCenter = pct != null ? pct + "%" : "—";
+
+  const panel = document.getElementById("overviewPanel");
+  // #region agent log
+  fetch(
+    "http://127.0.0.1:7750/ingest/853901e6-d4c8-4b6b-b2a7-9b1a93c88eb5",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "782a56",
+      },
+      body: JSON.stringify({
+        sessionId: "782a56",
+        location: "tab.js:renderOverviewPanel",
+        message: "render overview state",
+        data: {
+          panelFound: !!panel,
+          snapPresent: !!snap,
+          pct,
+          clsLen: classification.length,
+          cumDefined:
+            snap?.gpaOverall != null ||
+            snap?.cumulativeGPA != null ||
+            currentStudent?.cumulativeGPA != null,
+          gpaRenderedOk:
+            typeof gpaOv === "string" && gpaOv !== "—",
+        },
+        timestamp: Date.now(),
+        hypothesisId: "E",
+        runId: "post-fix",
+      }),
+    },
+  ).catch(() => {});
+  // #endregion
+  if (!panel) return;
+
+  panel.innerHTML = `
+    <div class="ov-row ov-overview-top" style="align-items:center;gap:12px;">
+      <div class="ov-progress-ring">
+        <svg width="52" height="52" viewBox="0 0 52 52">
+          <circle cx="26" cy="26" r="20" fill="none" stroke="var(--border)" stroke-width="4"/>
+          <circle cx="26" cy="26" r="20" fill="none" stroke="#501214" stroke-width="4"
+            stroke-dasharray="${dash} ${circumference}"
+            stroke-dashoffset="${circumference / 4}"
+            stroke-linecap="round"
+            transform="rotate(-90 26 26)"/>
+        </svg>
+        <div class="ov-ring-label">${ringCenter}</div>
+      </div>
+      <div class="ov-overview-text">
+        <div class="ov-classification">${
+          classification ? classification : "—"
+        }</div>
+        <div class="ov-sub" style="margin-top:2px">${progressCaption}</div>
+      </div>
+    </div>
+    <div class="ov-gpa-strip" aria-label="Overall grade point average">
+      <div class="ov-gpa-row">
+        <span class="ov-gpa-label">Overall GPA</span>
+        <span class="ov-gpa-val">${gpaOv}</span>
+      </div>
+    </div>
+    <div class="ov-divider"></div>
+    <div class="ov-row">
+      <div class="ov-stat">
+        <div class="ov-val">${totalCourses}</div>
+        <div class="ov-label">This semester</div>
+        <div class="ov-sub">${totalHours} hrs ${onTrackLabel}</div>
+      </div>
+      ${waitlisted.length > 0 ? `
+      <div class="ov-stat">
+        <div class="ov-val ov-red">${waitlisted.length}</div>
+        <div class="ov-label">Waitlisted</div>
+      </div>` : ""}
+    </div>
+    <div class="ov-divider"></div>
+  `;
 }
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -1232,17 +1912,8 @@ function updateWeekHours(events) {
   if (el && totalHours > 0) el.innerHTML = "<strong>" + totalHours + " credit hours</strong> this semester";
 }
 function updateOverviewFromEvents(events) {
-  const seen = new Set(), courses = [], waitlisted = [];
-  for (const ev of events) { if (seen.has(ev.crn)) continue; seen.add(ev.crn); if (ev.registrationStatus && ev.registrationStatus.toLowerCase().includes("wait")) waitlisted.push(ev); else courses.push(ev); }
-  const totalCourses = courses.length + waitlisted.length;
-  const totalHours = [...courses, ...waitlisted].reduce((sum, c) => sum + (c.creditHours || c.credits || 3), 0);
-  let onTrackLabel = "";
-  if (totalHours >= 15) onTrackLabel = '<span class="ov-badge ov-green">Ahead of pace</span>';
-  else if (totalHours >= 12) onTrackLabel = '<span class="ov-badge ov-blue">On track</span>';
-  else if (totalHours > 0) onTrackLabel = '<span class="ov-badge ov-amber">Light semester</span>';
-  const panel = document.getElementById("overviewPanel");
-  if (!panel) return;
-  panel.innerHTML = `<div class="ov-row"><div class="ov-stat"><div class="ov-val">${totalCourses}</div><div class="ov-label">Courses registered</div><div class="ov-sub">${totalHours} credit hours ${onTrackLabel}</div></div>${waitlisted.length > 0 ? `<div class="ov-stat"><div class="ov-val ov-red">${waitlisted.length}</div><div class="ov-label">Waitlisted</div></div>` : ""}</div><div class="ov-divider"></div><div class="ov-row"><div class="ov-stat" style="width:100%"><div class="ov-sub" style="font-size:11px;color:var(--text3)">GPA & credits load after degree audit runs</div></div></div>`;
+  cachedOverviewEvents = events || [];
+  renderOverviewPanel();
 }
 function toggleOverview() {
   const body = document.getElementById("overviewPanel"), chevron = document.getElementById("overviewChevron");
