@@ -308,6 +308,7 @@ function dbgLog(location, message, data, hypothesisId) {
       if (ok) {
         await loadSchedule(currentTerm);
         await loadBannerPlans(currentTerm); // session is warm after loadSchedule
+        autoLoadEligibleCourses();
       } else {
         $("statusBar").textContent =
           "Use Import Schedule to sign in and load your registration.";
