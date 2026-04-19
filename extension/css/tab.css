@@ -1127,3 +1127,56 @@ body {
 .import-btn.loading {
   opacity: 0.7;
 }
+
+/* ── Resize Handle (Simone) ── */
+.resize-handle {
+  width: 5px;
+  cursor: col-resize;
+  background: transparent;
+  flex-shrink: 0;
+  transition: background 0.15s;
+  position: relative;
+  z-index: 10;
+}
+.resize-handle:hover {
+  background: rgba(80, 18, 20, 0.15);
+}
+
+/* ── Custom Scrollbar — iOS-style (Simone) ── */
+.calendar-panel::-webkit-scrollbar {
+  width: 4px;
+}
+.calendar-panel::-webkit-scrollbar-track {
+  background: transparent;
+}
+.calendar-panel::-webkit-scrollbar-thumb {
+  background: rgba(54, 53, 52, 0.2);
+  border-radius: 999px;
+}
+.calendar-panel::-webkit-scrollbar-thumb:hover {
+  background: rgba(54, 53, 52, 0.35);
+}
+.calendar-panel::-webkit-scrollbar-button {
+  display: none;
+}
+
+/* ── TXST Header Enhancements (Simone) ── */
+.sidebar-header {
+  border-bottom: 2px solid var(--gold);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+.top-bar {
+  border-bottom: 2px solid var(--gold);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.header-logo {
+  height: 33px;
+  width: auto;
+  object-fit: contain;
+  filter: brightness(0) invert(1);
+}

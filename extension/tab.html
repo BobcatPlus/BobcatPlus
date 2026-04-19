@@ -10,7 +10,10 @@
     <div class="sidebar-overlay" id="sidebarOverlay"></div>
     <div class="sidebar" id="sidebar">
       <div class="sidebar-header">
-        <span>Bobcat Plus</span>
+        <div class="header-brand">
+          <img src="images/txst-logo-b.jpg" alt="TXST" class="header-logo" />
+          <span>Bobcat Plus</span>
+        </div>
         <button class="sidebar-close" id="sidebarClose">✕</button>
       </div>
       <nav class="sidebar-nav">
@@ -92,7 +95,10 @@
         <button class="hamburger" id="hamburgerBtn">
           <span></span><span></span><span></span>
         </button>
-        <h1>Bobcat Plus</h1>
+        <div class="header-brand">
+          <img src="images/txst-logo-b.jpg" alt="TXST" class="header-logo" />
+          <h1>Bobcat Plus</h1>
+        </div>
       </div>
       <div class="controls">
         <span class="student-name" id="studentName">Loading...</span>
@@ -133,7 +139,8 @@
         <table class="calendar" id="calendar"></table>
       </div>
 
-      <div class="right-panel">
+      <div class="resize-handle" id="resizeHandle"></div>
+      <div class="right-panel" id="rightPanel">
         <!-- Saved schedules -->
         <div class="saved-section">
           <div class="saved-header">
