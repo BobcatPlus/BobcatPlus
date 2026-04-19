@@ -467,40 +467,17 @@ $("manualSaveTxstBtn").addEventListener("click", async () => {
     return;
   }
 
-  // Save locally so it shows up in the BobcatPlus sidebar.
-  const courses = manualDraft.map((d) => {
-    const mt = d.section?.meetingsFaculty?.[0]?.meetingTime;
-    const days = [];
-    if (mt?.monday) days.push("Mon");
-    if (mt?.tuesday) days.push("Tue");
-    if (mt?.wednesday) days.push("Wed");
-    if (mt?.thursday) days.push("Thu");
-    if (mt?.friday) days.push("Fri");
-    const beginTime = mt?.beginTime
-      ? mt.beginTime.slice(0, 2) + ":" + mt.beginTime.slice(2)
-      : null;
-    const endTime = mt?.endTime
-      ? mt.endTime.slice(0, 2) + ":" + mt.endTime.slice(2)
-      : null;
-    return {
-      subject: d.subject,
-      courseNumber: d.courseNumber,
-      crn: d.key,
-      days: days.length ? days : null,
-      beginTime,
-      endTime,
-    };
-  });
-  const txstPlanNumber = resp.result?.bobcatPlanNumber ?? null;
-  saveSchedule(planName, courses, txstPlanNumber);
   // Clear draft state after saving
   manualDraft = [];
   expandedCourseKey = null;
   selectedSectionByCourse = {};
   $("manualPlanName").value = "";
+  activeView = "registered";
   setManualVisible(false);
   renderManualDraft();
   $("statusBar").textContent = "Saved: " + planName + ".";
+  // Load from TXST so it shows up as a banner plan (with proper TXST delete handler)
+  await loadBannerPlans(currentTerm);
 });
 
 $("manualResetSessionBtn").addEventListener("click", () => {
