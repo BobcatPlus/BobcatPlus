@@ -862,7 +862,7 @@ function renderCacheAge(cacheTs) {
   const ageMs = Date.now() - cacheTs;
   const mins = Math.floor(ageMs / 60000);
   const label = mins < 1 ? "just now" : mins < 60 ? mins + "m ago" : Math.floor(mins / 60) + "h ago";
-  el.innerHTML = "Seat data from cache · " + label + " &nbsp;<button id='refreshEligibleBtn' style='font-size:10px;padding:2px 8px;cursor:pointer;background:rgba(80,18,20,0.08);color:var(--maroon);border:0.5px solid rgba(80,18,20,0.2);border-radius:20px;font-family:inherit;font-weight:500;transition:background 0.15s;'>Refresh Seats</button>";
+  el.innerHTML = "<span>Seat data from cache · " + label + "</span><button id='refreshEligibleBtn' class='bp-icon-btn'><svg width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='23 4 23 10 17 10'/><path d='M20.49 15a9 9 0 1 1-2.12-9.36L23 10'/></svg>Refresh</button>";
   const btn = document.getElementById("refreshEligibleBtn");
   if (btn) btn.addEventListener("click", () => { analysisResults = null; autoLoadEligibleCourses({ forceRefresh: true }); });
 }
@@ -1228,8 +1228,8 @@ function renderCalendarFromWorkingCourses() {
       }
 
       const lockSvg = p.isLocked
-        ? `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`
-        : `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V5a5 5 0 0 1 9.9-1.5"/></svg>`;
+        ? `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`
+        : `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V5a5 5 0 0 1 9.9-1.5"/></svg>`;
 
       block.innerHTML =
         '<div class="block-info">' +
@@ -1451,8 +1451,8 @@ function renderEligibleList() {
     : dedupedCourses;
 
   if (status) {
-    const btnStyle = "font-size:10px;padding:2px 7px;cursor:pointer;color:var(--maroon);border:0.5px solid rgba(80,18,20,0.2);border-radius:20px;font-family:inherit;font-weight:500;transition:background 0.15s;margin-left:6px;background:" + (showOpenSeatsOnly ? "rgba(80,18,20,0.15)" : "rgba(80,18,20,0.05)") + ";";
-    status.innerHTML = filteredCourses.length + " eligible courses &nbsp;<button id='seatsToggleBtn' style='" + btnStyle + "'>" + (showOpenSeatsOnly ? "✓ Open only" : "Open only") + "</button>";
+    const chipClass = "bp-chip" + (showOpenSeatsOnly ? " active" : "");
+    status.innerHTML = "<span>" + filteredCourses.length + " eligible courses</span><button id='seatsToggleBtn' class='" + chipClass + "'>" + (showOpenSeatsOnly ? "✓ Open only" : "Open only") + "</button>";
     const toggleBtnEl = document.getElementById("seatsToggleBtn");
     if (toggleBtnEl) toggleBtnEl.addEventListener("click", (e) => { e.stopPropagation(); showOpenSeatsOnly = !showOpenSeatsOnly; renderEligibleList(); });
   }

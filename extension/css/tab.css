@@ -1266,8 +1266,71 @@ body {
   overflow: hidden;
 }
 .eligible-status {
-  padding: 8px 16px 4px;
+  padding: 6px 12px 3px;
   font-size: 11px;
+  color: var(--text3);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* ── Build panel action buttons (Jira/SF aesthetic) ── */
+.bp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text3);
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: inherit;
+  transition: border-color 0.1s, background 0.1s, color 0.1s;
+  flex-shrink: 0;
+}
+.bp-chip:hover {
+  border-color: rgba(80, 18, 20, 0.35);
+  color: var(--maroon);
+}
+.bp-chip.active {
+  border-color: rgba(80, 18, 20, 0.4);
+  background: rgba(80, 18, 20, 0.07);
+  color: var(--maroon);
+}
+.bp-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text3);
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: inherit;
+  transition: border-color 0.1s, background 0.1s, color 0.1s;
+  flex-shrink: 0;
+}
+.bp-icon-btn:hover {
+  border-color: rgba(80, 18, 20, 0.35);
+  color: var(--maroon);
+  background: rgba(80, 18, 20, 0.03);
+}
+.eligible-cache-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1px 12px 5px;
+  font-size: 10px;
   color: var(--text3);
   flex-shrink: 0;
 }
@@ -1353,6 +1416,7 @@ body {
 /* Locked course block styling */
 .course-block.locked {
   border-left-width: 3px !important;
+  filter: brightness(0.91);
 }
 .course-block.locked .block-lock-btn {
   opacity: 1;
