@@ -371,6 +371,7 @@ body {
 /* ── Right Panel ── */
 .right-panel {
   width: 320px;
+  min-width: 240px;
   background: var(--surface);
   border-left: 0.5px solid var(--border);
   display: flex;
@@ -1782,6 +1783,85 @@ body {
 /* ============================================================
    DARK MODE  —  automatic via prefers-color-scheme
    ============================================================ */
+/* ============================================================
+   RESPONSIVE / SMALL SCREEN
+   ============================================================ */
+
+/* Narrow windows (13" MacBook at partial width, ~1024–1100px) */
+@media (max-width: 1100px) {
+  .right-panel {
+    width: 280px;
+    min-width: 220px;
+  }
+}
+
+/* Small screens (tablet-ish, < 860px) — stack panels vertically */
+@media (max-width: 860px) {
+  .main {
+    flex-direction: column;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+  .calendar-panel {
+    flex: none;
+    min-height: 420px;
+    height: 56vh;
+    overflow-y: auto;
+    border-bottom: 0.5px solid var(--border);
+  }
+  .resize-handle {
+    display: none;
+  }
+  .right-panel {
+    width: 100% !important;
+    min-width: 0;
+    border-left: none;
+    border-top: 0.5px solid var(--border);
+    height: auto;
+    min-height: 340px;
+    flex-shrink: 0;
+  }
+  /* Calendar table: minimum readable column width */
+  .calendar {
+    min-width: 480px;
+    font-size: 9px;
+  }
+  .calendar-panel {
+    overflow-x: auto;
+  }
+  .calendar th,
+  .calendar .time-label {
+    font-size: 9px;
+    padding: 6px 2px;
+  }
+}
+
+/* Very small screens (< 600px) */
+@media (max-width: 600px) {
+  .top-bar {
+    padding: 10px 12px;
+  }
+  .top-bar h1 {
+    font-size: 15px;
+  }
+  .top-bar select {
+    font-size: 11px;
+    padding: 5px 22px 5px 8px;
+  }
+  .calendar-panel {
+    padding: 0 8px 8px;
+    height: 50vh;
+    min-height: 300px;
+  }
+  .modal {
+    width: 96vw;
+    padding: 18px 16px;
+  }
+  .modal-footer {
+    flex-direction: column;
+  }
+}
+
 @media (prefers-color-scheme: dark) {
   /* ── Custom properties ── */
   :root {
