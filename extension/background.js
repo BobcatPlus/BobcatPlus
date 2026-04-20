@@ -1104,7 +1104,6 @@ function extractPlanNumberFromBatchResponse(payload) {
   if (planHeaderId != null) {
     const v = Number(planHeaderId);
     if (Number.isFinite(v) && v > 0) {
-      console.log("[BobcatPlus] planNumber from data.planHeader.id:", v);
       return v;
     }
   }
@@ -1140,7 +1139,6 @@ function extractPlanNumberFromBatchResponse(payload) {
     consider(row.id);
     if (row.data && typeof row.data === "object") consider(row.data.planNumber);
   }
-  console.log("[BobcatPlus] extracted planNumber (fallback):", best);
   return best;
 }
 
@@ -2027,12 +2025,6 @@ async function getAllBannerPlans(term) {
         encodeURIComponent(uniqueSessionId),
     );
     const planHeaders = extractPlanHeaders(selectPlanHtml);
-    console.log(
-      "[BobcatPlus] getAllBannerPlans:",
-      planHeaders.length,
-      "plans:",
-      planHeaders.map((p) => p.name),
-    );
     // Return plans with planCourses so tab.js can fetch meeting times on demand
     return planHeaders.map((p) => ({
       name: p.name,
@@ -2053,10 +2045,6 @@ async function fetchPlanCalendar(term, planCourses) {
   if (!planCourses || planCourses.length === 0) return [];
 
   // Group planCourses by subject+courseNumber to minimise search calls
-  console.log(
-    "[BobcatPlus] fetchPlanCalendar: planCourses sample:",
-    JSON.stringify(planCourses.slice(0, 2)),
-  );
   const courseMap = new Map();
   for (const course of planCourses) {
     // Banner planCourses may use 'crn' or 'courseReferenceNumber'
@@ -2072,12 +2060,6 @@ async function fetchPlanCalendar(term, planCourses) {
     }
     courseMap.get(key).crns.add(crn);
   }
-  console.log(
-    "[BobcatPlus] fetchPlanCalendar: courseMap:",
-    [...courseMap.entries()].map(
-      ([k, v]) => k + " => CRNs:" + [...v.crns].join(","),
-    ),
-  );
 
   // Reference week: Monday of the current week (calendar renderer only needs day+time)
   const now = new Date();
@@ -2139,19 +2121,6 @@ async function fetchPlanCalendar(term, planCourses) {
       });
       if (!data?.success || !Array.isArray(data.data)) continue;
 
-      const returnedCRNs = data.data.map((s) =>
-        String(s.courseReferenceNumber || ""),
-      );
-      console.log(
-        "[BobcatPlus] fetchPlanCalendar:",
-        subject,
-        courseNumber,
-        "- want:",
-        JSON.stringify([...crns]),
-        "- got:",
-        JSON.stringify(returnedCRNs),
-      );
-
       for (const section of data.data) {
         const crn = String(section.courseReferenceNumber || "");
         if (!crns.has(crn)) continue;
@@ -2196,13 +2165,6 @@ async function fetchPlanCalendar(term, planCourses) {
     await new Promise((r) => setTimeout(r, 200));
   }
 
-  console.log(
-    "[BobcatPlus] fetchPlanCalendar: built",
-    events.length,
-    "events for",
-    courseMap.size,
-    "courses",
-  );
   return events;
 }
 
@@ -2345,7 +2307,7 @@ async function submitFirstFormFromHtmlSw(htmlText, baseHref) {
     });
     return await r.text();
   } catch (e) {
-    console.log("[BobcatPlus] submitFirstFormFromHtmlSw:", e);
+    console.warn("[BobcatPlus] submitFirstFormFromHtmlSw:", e);
     return null;
   }
 }
@@ -2378,26 +2340,23 @@ async function getCurrentSchedule(term) {
           body: new URLSearchParams({ term: term }).toString(),
         },
       );
-      console.log("[BobcatPlus] term/search status:", r1.status);
 
       const r2 = await fetch(
         "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/classRegistration",
         { credentials: "include" },
       );
-      console.log("[BobcatPlus] classRegistration status:", r2.status);
 
       const response = await fetch(
         "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/getRegistrationEvents?termFilter=",
         { credentials: "include" },
       );
-      console.log("[BobcatPlus] getRegistrationEvents status:", response.status);
       const eventsBase =
         "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/getRegistrationEvents";
       let text = await response.text();
       const resolved = await resolveRegistrationHtmlToJsonSw(text, eventsBase);
       text = resolved.text;
       if (!registrationBodyLooksLikeJson(text)) {
-        console.log(
+        console.warn(
           "[BobcatPlus] getRegistrationEvents non-JSON after SAML hops:",
           resolved.samlHops,
           text.slice(0, 80),
@@ -2406,7 +2365,7 @@ async function getCurrentSchedule(term) {
       }
       return JSON.parse(text);
     } catch (e) {
-      console.log("[BobcatPlus] getCurrentSchedule error:", e);
+      console.error("[BobcatPlus] getCurrentSchedule error:", e);
       return null;
     }
   });

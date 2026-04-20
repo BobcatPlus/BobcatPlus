@@ -158,6 +158,7 @@ let termChangeGeneration = 0;
 let panelMode = "build";
 let schedulesCollapsed = false;
 let activeScheduleKey = "registered";
+let activeView = -1; // index into savedSchedules, or -1 when none selected
 let newPlanDisplayName = "";
 let newPlanSingleClickOpensEdit = true;
 let newPlanClickTimer = null;
