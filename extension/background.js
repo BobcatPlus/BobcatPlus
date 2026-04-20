@@ -738,27 +738,6 @@ async function fetchAuditJson(studentId, school, degree) {
     degree +
     "&is-process-new=false&audit-type=AA&auditId=&include-inprogress=true&include-preregistered=true&aid-term=";
   const response = await fetch(auditUrl, { credentials: "include" });
-  // #region agent log
-  fetch(
-    "http://127.0.0.1:7750/ingest/853901e6-d4c8-4b6b-b2a7-9b1a93c88eb5",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "782a56",
-      },
-      body: JSON.stringify({
-        sessionId: "782a56",
-        location: "background.js:fetchAuditJson",
-        message: "audit HTTP",
-        data: { ok: response.ok, status: response.status },
-        timestamp: Date.now(),
-        hypothesisId: "B",
-        runId: "pre-fix",
-      }),
-    },
-  ).catch(() => {});
-  // #endregion
   if (!response.ok) return null;
   const raw = await response.json();
   return unwrapAuditPayload(raw);
@@ -881,31 +860,6 @@ async function getDegreeAuditOverview() {
       gpaOverall: student.cumulativeGPA,
       classification: student.classification || "",
     };
-    // #region agent log
-    fetch(
-      "http://127.0.0.1:7750/ingest/853901e6-d4c8-4b6b-b2a7-9b1a93c88eb5",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Debug-Session-Id": "782a56",
-        },
-        body: JSON.stringify({
-          sessionId: "782a56",
-          location: "background.js:getDegreeAuditOverview",
-          message: "no audit json — student-only branch",
-          data: {
-            hasInstGpa: student.institutionalGPA != null,
-            hasCumGpa: student.cumulativeGPA != null,
-            clsLen: String(student.classification || "").length,
-          },
-          timestamp: Date.now(),
-          hypothesisId: "D",
-          runId: "pre-fix",
-        }),
-      },
-    ).catch(() => {});
-    // #endregion
     return out;
   }
 
@@ -952,35 +906,6 @@ async function getDegreeAuditOverview() {
   if (merged.gpaOverall == null && merged.gpaTexasState != null) {
     merged.gpaOverall = merged.gpaTexasState;
   }
-  // #region agent log
-  fetch(
-    "http://127.0.0.1:7750/ingest/853901e6-d4c8-4b6b-b2a7-9b1a93c88eb5",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "782a56",
-      },
-      body: JSON.stringify({
-        sessionId: "782a56",
-        location: "background.js:getDegreeAuditOverview",
-        message: "merged audit overview",
-        data: {
-          blockCount: Array.isArray(audit.blockArray)
-            ? audit.blockArray.length
-            : -1,
-          progressPercent: merged.progressPercent,
-          hasInstGpa: merged.gpaTexasState != null,
-          hasCumGpa: merged.gpaOverall != null,
-          clsLen: String(merged.classification || "").length,
-        },
-        timestamp: Date.now(),
-        hypothesisId: "C",
-        runId: "post-fix",
-      }),
-    },
-  ).catch(() => {});
-  // #endregion
   return merged;
 }
 
@@ -2458,9 +2383,10 @@ function openLoginPopup(sendResponse) {
 // --- Listen for messages from popup and full tab ---
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "runAnalysis") {
+    const analysisTerm = message.term || null;
     runAnalysis((update) => {
-      chrome.runtime.sendMessage(update);
-    }, message.term || null);
+      chrome.runtime.sendMessage({ ...update, _term: analysisTerm });
+    }, analysisTerm);
     sendResponse({ started: true });
   }
 
@@ -2484,33 +2410,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "getDegreeAuditOverview") {
     getDegreeAuditOverview()
       .then((data) => sendResponse(data))
-      .catch((err) => {
-        // #region agent log
-        fetch(
-          "http://127.0.0.1:7750/ingest/853901e6-d4c8-4b6b-b2a7-9b1a93c88eb5",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-Debug-Session-Id": "782a56",
-            },
-            body: JSON.stringify({
-              sessionId: "782a56",
-              location: "background.js:onMessage:getDegreeAuditOverview",
-              message: "getDegreeAuditOverview threw",
-              data: {
-                errName: err && err.name,
-                errMsgLen: err && err.message ? String(err.message).length : 0,
-              },
-              timestamp: Date.now(),
-              hypothesisId: "D",
-              runId: "pre-fix",
-            }),
-          },
-        ).catch(() => {});
-        // #endregion
-        sendResponse(null);
-      });
+      .catch(() => sendResponse(null));
     return true;
   }
 

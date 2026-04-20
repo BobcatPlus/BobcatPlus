@@ -171,91 +171,21 @@ const calendarCourseMetaByCrn = new Map();
 function clearCalendarCourseMeta() { calendarCourseMetaByCrn.clear(); }
 function registerCourseMeta(crn, meta) { if (crn && meta) calendarCourseMetaByCrn.set(String(crn), meta); }
 
-// ============================================================
-// DEBUG LOGGER
-// ============================================================
-function dbgLog(location, message, data, hypothesisId) {
-  fetch("http://127.0.0.1:7750/ingest/853901e6-d4c8-4b6b-b2a7-9b1a93c88eb5", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "782a56" }, body: JSON.stringify({ sessionId: "782a56", location, message, data: data || {}, timestamp: Date.now(), hypothesisId }) }).catch(() => {});
-}
 
 // ============================================================
 // INIT
 // ============================================================
 
 (async () => {
-  const reloadMark = sessionStorage.getItem("bobcat_dbg_post_login_reload");
-  if (reloadMark) {
-    sessionStorage.removeItem("bobcat_dbg_post_login_reload");
-    dbgLog(
-      "tab.js:init",
-      "tab loaded after post-login location.reload",
-      { reloadMark },
-      "H2-verify",
-    );
-  }
-
   chrome.runtime.sendMessage(
     { action: "getDegreeAuditOverview" },
     (auditData) => {
-      const lastErr =
-        typeof chrome !== "undefined" && chrome.runtime?.lastError
-          ? chrome.runtime.lastError.message
-          : "";
-      // #region agent log
-      fetch(
-        "http://127.0.0.1:7750/ingest/853901e6-d4c8-4b6b-b2a7-9b1a93c88eb5",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Debug-Session-Id": "782a56",
-          },
-          body: JSON.stringify({
-            sessionId: "782a56",
-            location: "tab.js:init:getDegreeAuditOverview callback",
-            message: "overview message response",
-            data: {
-              lastErrorLen: lastErr ? String(lastErr).length : 0,
-              hasPayload: auditData != null,
-              hasName: !!(auditData && auditData.name),
-            },
-            timestamp: Date.now(),
-            hypothesisId: "A",
-            runId: "pre-fix",
-          }),
-        },
-      ).catch(() => {});
-      // #endregion
       if (auditData && auditData.name) {
         applyStudentInfoToUI(auditData);
         degreeAuditSnapshot = auditData;
         updateOverviewFromEvents([]);
       } else {
         chrome.runtime.sendMessage({ action: "getStudentInfo" }, (student) => {
-          // #region agent log
-          fetch(
-            "http://127.0.0.1:7750/ingest/853901e6-d4c8-4b6b-b2a7-9b1a93c88eb5",
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "X-Debug-Session-Id": "782a56",
-              },
-              body: JSON.stringify({
-                sessionId: "782a56",
-                location: "tab.js:init:getStudentInfo fallback",
-                message: "fallback after overview null",
-                data: {
-                  hasStudent: student != null,
-                  clearSnapshot: true,
-                },
-                timestamp: Date.now(),
-                hypothesisId: "D",
-                runId: "pre-fix",
-              }),
-            },
-          ).catch(() => {});
-          // #endregion
           if (student) {
             applyStudentInfoToUI(student);
             degreeAuditSnapshot = null;
@@ -497,34 +427,6 @@ function normalizeRegistrationEventsPayload(payload) {
 function refreshDegreeAuditOverview() {
   return new Promise((resolve) => {
     chrome.runtime.sendMessage({ action: "getDegreeAuditOverview" }, (data) => {
-      const lastErr =
-        typeof chrome !== "undefined" && chrome.runtime?.lastError
-          ? chrome.runtime.lastError.message
-          : "";
-      // #region agent log
-      fetch(
-        "http://127.0.0.1:7750/ingest/853901e6-d4c8-4b6b-b2a7-9b1a93c88eb5",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Debug-Session-Id": "782a56",
-          },
-          body: JSON.stringify({
-            sessionId: "782a56",
-            location: "tab.js:refreshDegreeAuditOverview",
-            message: "refresh overview response",
-            data: {
-              lastErrorLen: lastErr ? String(lastErr).length : 0,
-              appliedSnapshot: !!(data && data.name),
-            },
-            timestamp: Date.now(),
-            hypothesisId: "A",
-            runId: "pre-fix",
-          }),
-        },
-      ).catch(() => {});
-      // #endregion
       if (data && data.name) {
         degreeAuditSnapshot = data;
         currentStudent = data;
@@ -858,38 +760,6 @@ function renderOverviewPanel() {
   const ringCenter = pct != null ? pct + "%" : "—";
 
   const panel = document.getElementById("overviewPanel");
-  // #region agent log
-  fetch(
-    "http://127.0.0.1:7750/ingest/853901e6-d4c8-4b6b-b2a7-9b1a93c88eb5",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "782a56",
-      },
-      body: JSON.stringify({
-        sessionId: "782a56",
-        location: "tab.js:renderOverviewPanel",
-        message: "render overview state",
-        data: {
-          panelFound: !!panel,
-          snapPresent: !!snap,
-          pct,
-          clsLen: classification.length,
-          cumDefined:
-            snap?.gpaOverall != null ||
-            snap?.cumulativeGPA != null ||
-            currentStudent?.cumulativeGPA != null,
-          gpaRenderedOk:
-            typeof gpaOv === "string" && gpaOv !== "—",
-        },
-        timestamp: Date.now(),
-        hypothesisId: "E",
-        runId: "post-fix",
-      }),
-    },
-  ).catch(() => {});
-  // #endregion
   if (!panel) return;
 
   panel.innerHTML = `
@@ -991,7 +861,6 @@ function attachImportLoginListener(importBtn, importSvg) {
         analysisResults = null; cachedRawData = null; cachedRegisteredCourses = []; cachedRegisteredTerm = null; conversationHistory = [];
         $("statusBar").textContent = "Importing schedule...";
         await loadSchedule(currentTerm);
-        sessionStorage.setItem("bobcat_dbg_post_login_reload", String(Date.now()));
         location.reload();
       })().catch((err) => { console.error("[BobcatPlus] post-login import:", err); addMessage("system", "Could not finish loading. Try Import Schedule again."); importBtn.disabled = false; importBtn.classList.remove("loading"); importBtn.innerHTML = importSvg; });
     }
@@ -1110,8 +979,6 @@ async function loadSchedule(term) {
 
   registeredFetchOk = data !== null;
   registeredFetchCompleted = true;
-  dbgLog("tab.js:loadSchedule", "fetch settled", { term, registeredFetchOk, dataNull: data === null, dataLen: Array.isArray(data) ? data.length : -1, fromDiskCache }, "H4");
-
   if (data && data.length > 0) {
     removeExistingScheduleRefreshPrompts();
     registeredScheduleCache[term] = data;
@@ -1846,11 +1713,14 @@ function getLockedForLLM() {
 // ============================================================
 
 function runAnalysisAndWait() {
+  const mySeq = ++eligibleAnalysisSeq;
   const termAtStart = currentTerm;
   return new Promise((resolve) => {
+    const stale = () => { chrome.runtime.onMessage.removeListener(listener); resolve({ eligible: [], blocked: [], notOffered: [], needed: [], _skippedStaleTerm: true }); };
     const results = { eligible: [], blocked: [], notOffered: [], needed: [] };
     const listener = (message) => {
-      if (currentTerm !== termAtStart) { chrome.runtime.onMessage.removeListener(listener); resolve({ eligible: [], blocked: [], notOffered: [], needed: [], _skippedStaleTerm: true }); return; }
+      if (eligibleAnalysisSeq !== mySeq || currentTerm !== termAtStart) { stale(); return; }
+      if (message._term !== undefined && message._term !== termAtStart) { stale(); return; }
       if (message.type === "status") $("statusBar").textContent = message.message;
       if (message.type === "eligible") results.eligible.push(message.data);
       if (message.type === "done") { chrome.runtime.onMessage.removeListener(listener); results.notOffered = message.data.notOffered; results.needed = message.data.needed; resolve(results); }
