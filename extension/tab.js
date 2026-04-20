@@ -1259,6 +1259,9 @@ function renderCalendarFromWorkingCourses() {
       cell.appendChild(block);
     }
   }
+
+  // Show or clear conflict warning after every calendar render
+  updateConflictStatus();
 }
 
 // ============================================================
@@ -1893,6 +1896,50 @@ function toggleOverview() {
 // ============================================================
 // CONFLICT DETECTION
 // ============================================================
+
+/**
+ * Check workingCourses for any time overlap on shared days.
+ * workingCourses use "HH:MM" colon format for beginTime/endTime
+ * (different from LLM courses which use 4-char "HHMM" strings).
+ */
+function detectWorkingConflict() {
+  function toMin(t) {
+    if (!t) return null;
+    const p = t.split(":");
+    return p.length === 2 ? parseInt(p[0]) * 60 + parseInt(p[1]) : null;
+  }
+  for (let i = 0; i < workingCourses.length; i++) {
+    const a = workingCourses[i];
+    const aS = toMin(a.beginTime), aE = toMin(a.endTime);
+    if (!a.days?.length || aS === null || aE === null) continue;
+    for (let j = i + 1; j < workingCourses.length; j++) {
+      const b = workingCourses[j];
+      const bS = toMin(b.beginTime), bE = toMin(b.endTime);
+      if (!b.days?.length || bS === null || bE === null) continue;
+      if (!a.days.some((d) => b.days.includes(d))) continue;
+      if (aS < bE && bS < aE) return { a, b };
+    }
+  }
+  return null;
+}
+
+/** Update status bar with conflict warning, or clear it if no conflicts. */
+function updateConflictStatus() {
+  const bar = $("statusBar");
+  if (!bar) return;
+  const conflict = detectWorkingConflict();
+  if (conflict) {
+    const aCode = (conflict.a.subject || "") + " " + (conflict.a.courseNumber || "");
+    const bCode = (conflict.b.subject || "") + " " + (conflict.b.courseNumber || "");
+    const sharedDays = (conflict.a.days || []).filter((d) => (conflict.b.days || []).includes(d)).join("/");
+    bar.textContent = "⚠ " + aCode.trim() + " overlaps with " + bCode.trim() + (sharedDays ? " on " + sharedDays : "");
+    bar.dataset.conflict = "1";
+  } else if (bar.dataset.conflict === "1") {
+    bar.textContent = "Ready";
+    delete bar.dataset.conflict;
+  }
+}
+
 function timeStrToMinutes(t) { if (!t) return null; return parseInt(t.slice(0, 2)) * 60 + parseInt(t.slice(2)); }
 function formatTime24to12(h, m) { const ampm = h >= 12 ? "PM" : "AM"; const h12 = h > 12 ? h - 12 : h === 0 ? 12 : h; return h12 + ":" + String(m).padStart(2, "0") + " " + ampm; }
 function formatChatTime(t) { if (!t) return ""; return formatTime24to12(parseInt(t.slice(0, 2)), parseInt(t.slice(2))); }

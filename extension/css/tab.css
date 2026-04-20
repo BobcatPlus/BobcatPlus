@@ -1001,6 +1001,12 @@ body {
   font-size: 10px;
   color: var(--text3);
   flex-shrink: 0;
+  transition: color 0.2s, background 0.2s;
+}
+.status-bar[data-conflict="1"] {
+  color: #a03520;
+  background: rgba(160, 53, 32, 0.06);
+  font-weight: 500;
 }
 
 /* ── Course Modal ── */
@@ -1851,5 +1857,11 @@ body {
     background: rgba(180, 80, 80, 0.15);
     border-color: rgba(180, 80, 80, 0.3);
     color: #e8a0a0;
+  }
+
+  /* ── Conflict status bar ── */
+  .status-bar[data-conflict="1"] {
+    color: #e87060;
+    background: rgba(200, 80, 60, 0.1);
   }
 }
