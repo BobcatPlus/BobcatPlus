@@ -918,7 +918,7 @@ if (importBtn) {
     try {
       const result = await loadSchedule(currentTerm);
       if (result.stale) return;
-      if (!result.hadRegistrationRows && !result.fromDiskCache) { resetBtn = false; importBtn.textContent = "Waiting for login..."; addMessage("system", "Opening TXST login — sign in to load your registration."); chrome.runtime.sendMessage({ action: "openLoginPopup" }); attachImportLoginListener(importBtn, importSvg); return; }
+      if (result.authRequired || (!result.hadRegistrationRows && !result.fromDiskCache)) { resetBtn = false; importBtn.textContent = "Waiting for login..."; addMessage("system", "Opening TXST login — sign in to load your registration."); chrome.runtime.sendMessage({ action: "openLoginPopup" }); attachImportLoginListener(importBtn, importSvg); return; }
     } finally { if (resetBtn) { importBtn.disabled = false; importBtn.classList.remove("loading"); importBtn.innerHTML = importSvg; } }
   });
 }
@@ -973,8 +973,22 @@ async function submitFirstFormFromHtml(htmlText, baseHref) {
 
 async function resolveRegistrationHtmlToJson(initialText, baseHref) {
   let text = initialText, samlHops = 0;
-  while (!registrationResponseLooksLikeJson(text) && samlHops < 8) { const next = await submitFirstFormFromHtml(text, baseHref); if (!next) break; text = next; samlHops++; }
-  return { text, samlHops };
+  let authRequired = false;
+  while (!registrationResponseLooksLikeJson(text) && samlHops < 8) {
+    const next = await submitFirstFormFromHtml(text, baseHref);
+    if (next === null) {
+      // A failed hop while inside a SAML chain means the session is expired and
+      // the IdP/SP POST was blocked in the extension context. Flag auth required
+      // so callers can immediately open the login popup instead of retrying.
+      if (samlHops > 0 || /SAMLRequest|SAMLResponse|RelayState/i.test(text)) {
+        authRequired = true;
+      }
+      break;
+    }
+    text = next;
+    samlHops++;
+  }
+  return { text, samlHops, authRequired };
 }
 
 let registrationFetchQueue = Promise.resolve();
@@ -982,6 +996,12 @@ function queueRegistrationFetch(fn) {
   const task = registrationFetchQueue.then(fn, fn);
   registrationFetchQueue = task.then(() => {}, () => {});
   return task;
+}
+
+// Sentinel error thrown (not returned) so the retry loop in loadSchedule can
+// distinguish "auth expired" from a transient Banner session warmup failure.
+class AuthRequiredError extends Error {
+  constructor() { super("AUTH_REQUIRED"); this.name = "AuthRequiredError"; }
 }
 
 function getCurrentSchedule(term) {
@@ -993,10 +1013,14 @@ function getCurrentSchedule(term) {
       let text = await response.text();
       const eventsBase = "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/getRegistrationEvents";
       const resolved = await resolveRegistrationHtmlToJson(text, eventsBase);
+      if (resolved.authRequired) throw new AuthRequiredError();
       text = resolved.text;
       if (!registrationResponseLooksLikeJson(text)) return null;
       return JSON.parse(text);
-    } catch (e) { return null; }
+    } catch (e) {
+      if (e instanceof AuthRequiredError) throw e; // propagate — don't swallow
+      return null;
+    }
   });
 }
 
@@ -1032,13 +1056,27 @@ async function loadSchedule(term) {
   $("statusBar").textContent = "Loading schedule...";
 
   let fromDiskCache = false;
-  let data = await getCurrentSchedule(term);
+  let authRequired = false;
+  let data = null;
+  try {
+    data = await getCurrentSchedule(term);
+  } catch (e) {
+    if (e instanceof AuthRequiredError) authRequired = true;
+  }
   if (fetchGen !== scheduleFetchGeneration) return { stale: true, hadRegistrationRows: false, fromDiskCache: false, fetchOk: false };
-  if (data === null) {
-    for (let i = 0; i < 16; i++) {
+  // Retry up to 2×  for legitimate Banner session-warmup failures (not auth expiry).
+  // The old loop was 16 iterations: on expired auth each call triggered the full
+  // SAML chain, producing 17+ identical IdP POST requests before surfacing the
+  // login prompt. We now bail immediately on AuthRequiredError.
+  if (!authRequired && data === null) {
+    for (let i = 0; i < 2; i++) {
       await waitAnimationFrames(2);
       if (fetchGen !== scheduleFetchGeneration) return { stale: true, hadRegistrationRows: false, fromDiskCache: false, fetchOk: false };
-      data = await getCurrentSchedule(term);
+      try {
+        data = await getCurrentSchedule(term);
+      } catch (e) {
+        if (e instanceof AuthRequiredError) { authRequired = true; break; }
+      }
       if (fetchGen !== scheduleFetchGeneration) return { stale: true, hadRegistrationRows: false, fromDiskCache: false, fetchOk: false };
       if (data !== null) break;
     }
@@ -1076,14 +1114,17 @@ async function loadSchedule(term) {
     return { stale: false, hadRegistrationRows: true, fromDiskCache, fetchOk: true };
   } else if (data === null) {
     cachedRegisteredCourses = []; cachedRegisteredTerm = term;
-    buildEmptyCalendar(); $("statusBar").textContent = "Could not reach registration data. Try Import Schedule again.";
-    addScheduleRefreshPrompt();
-    return { stale: false, hadRegistrationRows: false, fromDiskCache, fetchOk: false };
+    buildEmptyCalendar();
+    $("statusBar").textContent = authRequired
+      ? "Session expired — click Import Schedule to log back in."
+      : "Could not reach registration data. Try Import Schedule again.";
+    if (!authRequired) addScheduleRefreshPrompt();
+    return { stale: false, hadRegistrationRows: false, fromDiskCache, fetchOk: false, authRequired };
   } else {
     removeExistingScheduleRefreshPrompts();
     cachedRegisteredCourses = []; cachedRegisteredTerm = term;
     buildEmptyCalendar(); $("statusBar").textContent = "No registered courses for this term";
-    return { stale: false, hadRegistrationRows: false, fromDiskCache: false, fetchOk: true };
+    return { stale: false, hadRegistrationRows: false, fromDiskCache: false, fetchOk: true, authRequired: false };
   }
 }
 
@@ -1468,8 +1509,11 @@ function renderEligibleList() {
   const seenKeys = new Set();
   const dedupedCourses = eligibleCourses.filter((course) => { const k = course.subject + "-" + course.courseNumber; if (seenKeys.has(k)) return false; seenKeys.add(k); return true; });
 
+  // openSection can be true even when seatsAvailable === 0 (admin-open, waitlisted, etc.)
+  // Require both flags so only sections with actual seats pass the filter.
+  const hasRealOpenSeat = (s) => s.openSection && (s.seatsAvailable == null || s.seatsAvailable > 0);
   const filteredCourses = showOpenSeatsOnly
-    ? dedupedCourses.filter((course) => (course.sections || []).some((s) => s.openSection))
+    ? dedupedCourses.filter((course) => (course.sections || []).some(hasRealOpenSeat))
     : dedupedCourses;
 
   if (status) {
@@ -1487,7 +1531,7 @@ function renderEligibleList() {
 
   filteredCourses.forEach((course) => {
     const key = course.subject + "-" + course.courseNumber;
-    const openCount = (course.sections || []).filter((s) => s.openSection).length;
+    const openCount = (course.sections || []).filter(hasRealOpenSeat).length;
     const totalCount = (course.sections || []).length;
     const alreadyAdded = workingCourses.some((c) => c.subject === course.subject && c.courseNumber === course.courseNumber && c.source !== "registered");
     const item = document.createElement("div");
@@ -1505,8 +1549,8 @@ function renderEligibleList() {
       if (courseTitle) { const titleEl = document.createElement("div"); titleEl.className = "eligible-course-title"; titleEl.textContent = courseTitle; body.appendChild(titleEl); }
       const seenCrns = new Set();
       let sections = (course.sections || []).filter((s) => { const crn = String(s.courseReferenceNumber || ""); if (!crn || seenCrns.has(crn)) return false; seenCrns.add(crn); return true; });
-      // Fix 2: also hide closed sections when Open Only is active
-      if (showOpenSeatsOnly) sections = sections.filter((s) => s.openSection);
+      // Only show sections with actual open seats (openSection alone isn't enough)
+      if (showOpenSeatsOnly) sections = sections.filter(hasRealOpenSeat);
       if (!sections.length) { expandedCourseKey = null; }
       else {
         sections.forEach((s) => {
@@ -1514,7 +1558,7 @@ function renderEligibleList() {
           const isOnCalendar = workingCourses.some((c) => String(c.crn) === crn);
           // Fix 3: click-to-toggle row — no radio buttons, no Add button
           const row = document.createElement("div");
-          row.className = "section-toggle-row" + (isOnCalendar ? " on-calendar" : "") + (!s.openSection ? " no-seats" : "");
+          row.className = "section-toggle-row" + (isOnCalendar ? " on-calendar" : "") + (!hasRealOpenSeat(s) ? " no-seats" : "");
           const check = document.createElement("span");
           check.className = "section-check";
           check.textContent = isOnCalendar ? "✓" : "";
