@@ -1556,50 +1556,62 @@ async function getCurrentTerm() {
   return { code: active.code, description: active.description };
 }
 
+// Banner's StudentRegistrationSsb session has a single "current term" per mode;
+// interleaved calls across terms corrupt which response ties to which request.
+// Serialize every session-state-mutating operation through this queue.
+let sessionQueue = Promise.resolve();
+function withSessionLock(fn) {
+  const task = sessionQueue.then(fn, fn);
+  sessionQueue = task.then(() => {}, () => {});
+  return task;
+}
+
 // --- Step 4: Search for sections of a single course ---
 async function searchCourse(subject, courseNumber, term) {
-  await fetch(
-    "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classSearch/resetDataForm",
-    { method: "POST", credentials: "include" },
-  );
-  await fetch(
-    "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/term/search?mode=search",
-    {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        term: term,
-        studyPath: "",
-        studyPathText: "",
-        startDatepicker: "",
-        endDatepicker: "",
-      }).toString(),
-    },
-  );
-  const searchForm = new FormData();
-  searchForm.append("txt_subject", subject);
-  searchForm.append("txt_courseNumber", courseNumber);
-  searchForm.append("txt_term", term);
-  searchForm.append("pageOffset", "0");
-  searchForm.append("pageMaxSize", "50");
-  searchForm.append("sortColumn", "subjectDescription");
-  searchForm.append("sortDirection", "asc");
-  searchForm.append("startDatepicker", "");
-  searchForm.append("endDatepicker", "");
-  searchForm.append(
-    "uniqueSessionId",
-    subject + courseNumber + "-" + Date.now(),
-  );
-  const response = await fetch(
-    "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/searchResults/searchResults",
-    { method: "POST", credentials: "include", body: searchForm },
-  );
-  const result = await response.json();
-  if (result.success && result.data && result.data.length > 0) {
-    return result.data;
-  }
-  return null;
+  return withSessionLock(async () => {
+    await fetch(
+      "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classSearch/resetDataForm",
+      { method: "POST", credentials: "include" },
+    );
+    await fetch(
+      "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/term/search?mode=search",
+      {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          term: term,
+          studyPath: "",
+          studyPathText: "",
+          startDatepicker: "",
+          endDatepicker: "",
+        }).toString(),
+      },
+    );
+    const searchForm = new FormData();
+    searchForm.append("txt_subject", subject);
+    searchForm.append("txt_courseNumber", courseNumber);
+    searchForm.append("txt_term", term);
+    searchForm.append("pageOffset", "0");
+    searchForm.append("pageMaxSize", "50");
+    searchForm.append("sortColumn", "subjectDescription");
+    searchForm.append("sortDirection", "asc");
+    searchForm.append("startDatepicker", "");
+    searchForm.append("endDatepicker", "");
+    searchForm.append(
+      "uniqueSessionId",
+      subject + courseNumber + "-" + Date.now(),
+    );
+    const response = await fetch(
+      "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/searchResults/searchResults",
+      { method: "POST", credentials: "include", body: searchForm },
+    );
+    const result = await response.json();
+    if (result.success && result.data && result.data.length > 0) {
+      return result.data;
+    }
+    return null;
+  });
 }
 
 // --- Step 5: Check prerequisites for a course ---
@@ -1704,9 +1716,15 @@ async function getCourseDescription(crn, term) {
 }
 
 // --- Main analysis function ---
-async function runAnalysis(sendUpdate, termCodeOverride) {
+// isCurrent is an optional predicate — when it returns false the caller has
+// started a newer analysis, so this run bails early to stop spamming the queue.
+async function runAnalysis(sendUpdate, termCodeOverride, isCurrent) {
+  const current = typeof isCurrent === "function" ? isCurrent : () => true;
+  const bail = () => !current();
+
   sendUpdate({ type: "status", message: "Detecting student info..." });
   const student = await getStudentInfo();
+  if (bail()) return;
   sendUpdate({ type: "student", data: student });
 
   sendUpdate({ type: "status", message: "Loading degree audit..." });
@@ -1715,6 +1733,7 @@ async function runAnalysis(sendUpdate, termCodeOverride) {
     student.school,
     student.degree,
   );
+  if (bail()) return;
   sendUpdate({
     type: "audit",
     data: {
@@ -1739,12 +1758,14 @@ async function runAnalysis(sendUpdate, termCodeOverride) {
   let term;
   if (termCodeOverride) {
     const terms = await getTerms();
+    if (bail()) return;
     const found = terms.find((t) => t.code === termCodeOverride);
     term = found
       ? { code: found.code, description: found.description }
       : { code: termCodeOverride, description: termCodeOverride };
   } else {
     term = await getCurrentTerm();
+    if (bail()) return;
   }
   sendUpdate({ type: "term", data: term });
 
@@ -1755,12 +1776,14 @@ async function runAnalysis(sendUpdate, termCodeOverride) {
   // Search courses sequentially — Banner session state cannot handle parallel searches
   sendUpdate({ type: "status", message: "Searching " + needed.length + " courses..." });
   for (const course of needed) {
+    if (bail()) return;
     try {
       const sections = await searchCourse(
         course.subject,
         course.courseNumber,
         term.code,
       );
+      if (bail()) return;
       if (sections) {
         course.crn = sections[0].courseReferenceNumber;
         course.sections = sections;
@@ -1772,6 +1795,8 @@ async function runAnalysis(sendUpdate, termCodeOverride) {
     }
   }
 
+  if (bail()) return;
+
   // Check prereqs and fetch descriptions in parallel, with description caching
   const coursesWithSections = needed.filter((c) => c.sections);
   const descCache = {};
@@ -1781,6 +1806,7 @@ async function runAnalysis(sendUpdate, termCodeOverride) {
   });
   await Promise.all(
     coursesWithSections.map(async (course) => {
+      if (bail()) return;
       try {
         const result = await checkPrereqs(
           course.crn,
@@ -1788,6 +1814,7 @@ async function runAnalysis(sendUpdate, termCodeOverride) {
           completed,
           inProgress,
         );
+        if (bail()) return;
         if (result.met) {
           const cacheKey = course.subject + course.courseNumber;
           if (!descCache[cacheKey]) {
@@ -1796,6 +1823,7 @@ async function runAnalysis(sendUpdate, termCodeOverride) {
               term.code,
             );
           }
+          if (bail()) return;
           course.sections.forEach(
             (s) => (s.courseDescription = descCache[cacheKey]),
           );
@@ -1807,12 +1835,14 @@ async function runAnalysis(sendUpdate, termCodeOverride) {
           sendUpdate({ type: "blocked", data: course });
         }
       } catch (e) {
+        if (bail()) return;
         eligible.push(course);
         sendUpdate({ type: "eligible", data: course });
       }
     }),
   );
 
+  if (bail()) return;
   sendUpdate({ type: "done", data: { eligible, blocked, notOffered, needed } });
 }
 
@@ -2003,44 +2033,47 @@ async function fetchPlanCalendar(term, planCourses) {
   const events = [];
 
   for (const { subject, courseNumber, crns } of courseMap.values()) {
+    let data = null;
     try {
-      // Reset Banner search state before each query so it doesn't return cached results
-      await fetch(REG_BASE + "/ssb/classSearch/resetDataForm", {
-        method: "POST",
-        credentials: "include",
-      });
-      await fetch(REG_BASE + "/ssb/term/search?mode=search", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          term,
-          studyPath: "",
-          studyPathText: "",
-          startDatepicker: "",
-          endDatepicker: "",
-        }).toString(),
-      });
+      data = await withSessionLock(async () => {
+        // Reset Banner search state before each query so it doesn't return cached results
+        await fetch(REG_BASE + "/ssb/classSearch/resetDataForm", {
+          method: "POST",
+          credentials: "include",
+        });
+        await fetch(REG_BASE + "/ssb/term/search?mode=search", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            term,
+            studyPath: "",
+            studyPathText: "",
+            startDatepicker: "",
+            endDatepicker: "",
+          }).toString(),
+        });
 
-      const form = new FormData();
-      form.append("txt_subject", subject);
-      form.append("txt_courseNumber", courseNumber);
-      form.append("txt_term", term);
-      form.append("pageOffset", "0");
-      form.append("pageMaxSize", "500");
-      form.append("sortColumn", "subjectDescription");
-      form.append("sortDirection", "asc");
-      form.append("startDatepicker", "");
-      form.append("endDatepicker", "");
-      form.append("uniqueSessionId", subject + courseNumber + "-" + Date.now());
+        const form = new FormData();
+        form.append("txt_subject", subject);
+        form.append("txt_courseNumber", courseNumber);
+        form.append("txt_term", term);
+        form.append("pageOffset", "0");
+        form.append("pageMaxSize", "500");
+        form.append("sortColumn", "subjectDescription");
+        form.append("sortDirection", "asc");
+        form.append("startDatepicker", "");
+        form.append("endDatepicker", "");
+        form.append("uniqueSessionId", subject + courseNumber + "-" + Date.now());
 
-      const res = await fetch(REG_BASE + "/ssb/searchResults/searchResults", {
-        method: "POST",
-        credentials: "include",
-        body: form,
+        const res = await fetch(REG_BASE + "/ssb/searchResults/searchResults", {
+          method: "POST",
+          credentials: "include",
+          body: form,
+        });
+        if (!res.ok) return null;
+        return await res.json().catch(() => null);
       });
-      if (!res.ok) continue;
-      const data = await res.json().catch(() => null);
       if (!data?.success || !Array.isArray(data.data)) continue;
 
       const returnedCRNs = data.data.map((s) =>
@@ -2271,47 +2304,49 @@ async function resolveRegistrationHtmlToJsonSw(initialText, baseHref) {
 // Used by popup.js (via getSchedule message). SAML-aware: follows redirect chains
 // that Banner returns when the session needs warming.
 async function getCurrentSchedule(term) {
-  try {
-    const r1 = await fetch(
-      "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/term/search?mode=registration",
-      {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ term: term }).toString(),
-      },
-    );
-    console.log("[BobcatPlus] term/search status:", r1.status);
-
-    const r2 = await fetch(
-      "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/classRegistration",
-      { credentials: "include" },
-    );
-    console.log("[BobcatPlus] classRegistration status:", r2.status);
-
-    const response = await fetch(
-      "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/getRegistrationEvents?termFilter=",
-      { credentials: "include" },
-    );
-    console.log("[BobcatPlus] getRegistrationEvents status:", response.status);
-    const eventsBase =
-      "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/getRegistrationEvents";
-    let text = await response.text();
-    const resolved = await resolveRegistrationHtmlToJsonSw(text, eventsBase);
-    text = resolved.text;
-    if (!registrationBodyLooksLikeJson(text)) {
-      console.log(
-        "[BobcatPlus] getRegistrationEvents non-JSON after SAML hops:",
-        resolved.samlHops,
-        text.slice(0, 80),
+  return withSessionLock(async () => {
+    try {
+      const r1 = await fetch(
+        "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/term/search?mode=registration",
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({ term: term }).toString(),
+        },
       );
+      console.log("[BobcatPlus] term/search status:", r1.status);
+
+      const r2 = await fetch(
+        "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/classRegistration",
+        { credentials: "include" },
+      );
+      console.log("[BobcatPlus] classRegistration status:", r2.status);
+
+      const response = await fetch(
+        "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/getRegistrationEvents?termFilter=",
+        { credentials: "include" },
+      );
+      console.log("[BobcatPlus] getRegistrationEvents status:", response.status);
+      const eventsBase =
+        "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/getRegistrationEvents";
+      let text = await response.text();
+      const resolved = await resolveRegistrationHtmlToJsonSw(text, eventsBase);
+      text = resolved.text;
+      if (!registrationBodyLooksLikeJson(text)) {
+        console.log(
+          "[BobcatPlus] getRegistrationEvents non-JSON after SAML hops:",
+          resolved.samlHops,
+          text.slice(0, 80),
+        );
+        return null;
+      }
+      return JSON.parse(text);
+    } catch (e) {
+      console.log("[BobcatPlus] getCurrentSchedule error:", e);
       return null;
     }
-    return JSON.parse(text);
-  } catch (e) {
-    console.log("[BobcatPlus] getCurrentSchedule error:", e);
-    return null;
-  }
+  });
 }
 
 // --- Login popup: opens DegreeWorks login, watches for success, closes automatically ---
@@ -2380,18 +2415,21 @@ function openLoginPopup(sendResponse) {
   );
 }
 
-let activeAnalysisTerm = null;
+// Every new runAnalysis request bumps this. In-flight stale analyses check
+// their captured generation against the current one and bail, so concurrent
+// runs for different terms collapse to just the latest request.
+let analysisGeneration = 0;
 
 // --- Listen for messages from popup and full tab ---
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "runAnalysis") {
     const analysisTerm = message.term || null;
-    if (activeAnalysisTerm === analysisTerm) { sendResponse({ started: false }); return; }
-    activeAnalysisTerm = analysisTerm;
+    const myGen = ++analysisGeneration;
+    const isCurrent = () => myGen === analysisGeneration;
     runAnalysis((update) => {
+      if (!isCurrent()) return;
       chrome.runtime.sendMessage({ ...update, _term: analysisTerm }).catch(() => {});
-      if (update.type === "done") activeAnalysisTerm = null;
-    }, analysisTerm);
+    }, analysisTerm, isCurrent);
     sendResponse({ started: true });
   }
 
@@ -2434,9 +2472,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.action === "runAnalysisForTerm") {
+    const myGen = ++analysisGeneration;
+    const isCurrent = () => myGen === analysisGeneration;
     runAnalysis((update) => {
-      chrome.runtime.sendMessage(update);
-    }, message.term || null);
+      if (!isCurrent()) return;
+      chrome.runtime.sendMessage(update).catch(() => {});
+    }, message.term || null, isCurrent);
     sendResponse({ started: true });
   }
 

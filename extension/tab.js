@@ -267,6 +267,7 @@ $("termSelect").addEventListener("change", async (e) => {
   newPlanDisplayName = ""; newPlanSingleClickOpensEdit = true;
   if (newPlanClickTimer) { clearTimeout(newPlanClickTimer); newPlanClickTimer = null; }
   buildEmptyCalendar();
+  updateWeekHours([]);
   setPanelMode("build");
   const ok = await checkAuth();
   if (gen !== termChangeGeneration) return;
@@ -1813,9 +1814,10 @@ function applyStudentInfoToUI(student) {
 // ============================================================
 function updateWeekHours(events) {
   const seen = new Set(); let totalHours = 0;
-  for (const ev of events) { if (!ev.crn || seen.has(ev.crn)) continue; seen.add(ev.crn); totalHours += ev.creditHours || ev.credits || 3; }
+  for (const ev of (events || [])) { if (!ev.crn || seen.has(ev.crn)) continue; seen.add(ev.crn); totalHours += ev.creditHours || ev.credits || 3; }
   const el = document.getElementById("weekHours");
-  if (el && totalHours > 0) el.innerHTML = "<strong>" + totalHours + " credit hours</strong> this semester";
+  if (!el) return;
+  el.innerHTML = totalHours > 0 ? "<strong>" + totalHours + " credit hours</strong> this semester" : "";
 }
 function updateOverviewFromEvents(events) {
   cachedOverviewEvents = events || [];
