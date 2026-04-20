@@ -2433,6 +2433,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ started: true });
   }
 
+  // tab.js fires this at the very top of a term change so stale analyses bail
+  // within ~1 searchCourse instead of waiting for the new runAnalysis message
+  // (which currently doesn't land until loadSchedule + loadBannerPlans finish).
+  if (message.action === "cancelAnalysis") {
+    analysisGeneration++;
+    sendResponse({ cancelled: true });
+  }
+
   if (message.action === "openFullTab") {
     chrome.tabs.create({ url: chrome.runtime.getURL("tab.html") });
     sendResponse({ opened: true });

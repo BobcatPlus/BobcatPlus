@@ -260,6 +260,9 @@ function registerCourseMeta(crn, meta) { if (crn && meta) calendarCourseMetaByCr
 $("termSelect").addEventListener("change", async (e) => {
   const gen = ++termChangeGeneration;
   currentTerm = e.target.value;
+  // Cancel any in-flight analysis immediately — otherwise the old term keeps
+  // firing searchCourse calls for 2-3s until the new runAnalysis message lands.
+  chrome.runtime.sendMessage({ action: "cancelAnalysis" }).catch(() => {});
   analysisResults = null; cachedRawData = null; cachedRegisteredCourses = []; cachedRegisteredTerm = null;
   conversationHistory = []; bannerPlans = []; registeredScheduleCache = {};
   eligibleCourses = []; expandedCourseKey = null; selectedSectionByCourse = {};
