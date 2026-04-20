@@ -945,7 +945,7 @@ async function getAuditData(studentId, school, degree) {
   function findNeeded(rules) {
     for (const rule of rules) {
       if (rule.ruleArray) findNeeded(rule.ruleArray);
-      if (rule.percentComplete === "100") continue;
+      if (String(rule.percentComplete) === "100") continue;
       if (rule.ruleType !== "Course") continue;
       if (!rule.requirement || !rule.requirement.courseArray) continue;
       if (
@@ -1895,6 +1895,10 @@ async function runAnalysis(sendUpdate, termCodeOverride, isCurrent, { forceRefre
         }
       } catch (e) {
         if (bail()) return;
+        // Prereq check failed (network / parse error) — show the course but flag it
+        // so the UI doesn't silently lie about eligibility.
+        console.warn("[BobcatPlus] prereq check failed for", course.subject, course.courseNumber, e);
+        course.prereqCheckFailed = true;
         eligible.push(course);
         sendUpdate({ type: "eligible", data: course });
       }
