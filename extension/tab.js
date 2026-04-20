@@ -860,7 +860,7 @@ function renderCacheAge(cacheTs) {
   const ageMs = Date.now() - cacheTs;
   const mins = Math.floor(ageMs / 60000);
   const label = mins < 1 ? "just now" : mins < 60 ? mins + "m ago" : Math.floor(mins / 60) + "h ago";
-  el.innerHTML = "Seat data from cache · " + label + " &nbsp;<button id='refreshEligibleBtn' style='font-size:11px;padding:1px 6px;cursor:pointer;'>Refresh</button>";
+  el.innerHTML = "Seat data from cache · " + label + " &nbsp;<button id='refreshEligibleBtn' style='font-size:10px;padding:2px 8px;cursor:pointer;background:rgba(80,18,20,0.08);color:var(--maroon);border:0.5px solid rgba(80,18,20,0.2);border-radius:20px;font-family:inherit;font-weight:500;transition:background 0.15s;'>Refresh Seats</button>";
   const btn = document.getElementById("refreshEligibleBtn");
   if (btn) btn.addEventListener("click", () => { analysisResults = null; autoLoadEligibleCourses({ forceRefresh: true }); });
 }
