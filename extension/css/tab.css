@@ -269,7 +269,7 @@ body {
 }
 .calendar td {
   border: 0.5px solid var(--border);
-  height: 52px;
+  height: var(--cell-h, 52px);
   vertical-align: top;
   position: relative;
   padding: 0;
@@ -1157,6 +1157,76 @@ body {
   transform: scale(1.15);
 }
 
+/* ── Section toggle rows (Build panel — click to add/remove) ── */
+.section-toggle-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 4px;
+  border-bottom: 0.5px solid var(--border);
+  font-size: 10px;
+  cursor: pointer;
+  transition: background 0.1s;
+  color: var(--text2);
+  line-height: 1.35;
+  border-radius: 4px;
+  user-select: none;
+}
+.section-toggle-row:last-child {
+  border-bottom: none;
+}
+.section-toggle-row:hover {
+  background: var(--bg);
+}
+.section-toggle-row.on-calendar {
+  color: var(--text);
+  font-weight: 500;
+}
+.section-check {
+  width: 13px;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--maroon);
+  line-height: 1.35;
+}
+.section-toggle-row.no-seats {
+  opacity: 0.55;
+}
+
+/* ── Calendar zoom controls ── */
+.zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.zoom-btn {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+  border: 0.5px solid var(--border);
+  border-radius: 4px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text2);
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.1s, color 0.1s;
+  padding: 0;
+}
+.zoom-btn:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+.zoom-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
 /* ── Import Schedule button (Mi's feature) ── */
 .import-btn {
   display: flex;
@@ -1481,6 +1551,7 @@ body {
   z-index: 2;
   /* Always visible — no hover required */
   opacity: 1;
+  padding-top: 4px;
 }
 .block-remove-btn,
 .block-lock-btn {
@@ -1863,14 +1934,14 @@ body {
 }
 
 @media (prefers-color-scheme: dark) {
-  /* ── Custom properties ── */
+  /* ── Custom properties — iOS Settings-style deep neutrals with warm tint ── */
   :root {
-    --bg: #1c1a19;
-    --surface: #252220;
-    --text: #e6e3df;
-    --text2: #a09c97;
-    --text3: #625f5b;
-    --border: rgba(255, 255, 255, 0.08);
+    --bg: #111110;          /* near-black, slight warmth — iOS grouped bg equivalent */
+    --surface: #1e1c1a;     /* card surface — iOS secondary grouped bg */
+    --text: #f5f2ef;        /* primary label — high contrast warm white */
+    --text2: #b8b2ac;       /* secondary label */
+    --text3: #6a6460;       /* tertiary label */
+    --border: rgba(255, 255, 255, 0.09);  /* iOS separator equivalent */
     /* --maroon, --gold, --radius* stay the same */
   }
 
@@ -1974,6 +2045,87 @@ body {
   /* ── top-bar select option background ── */
   .top-bar select option {
     background: #2a1a1b;
+  }
+
+  /* ── Scrollbars throughout the right panel ── */
+  .right-panel::-webkit-scrollbar,
+  .chat-messages::-webkit-scrollbar,
+  .build-panel .eligible-list::-webkit-scrollbar,
+  .saved-list::-webkit-scrollbar,
+  .sidebar-overview::-webkit-scrollbar,
+  .modal::-webkit-scrollbar {
+    width: 4px;
+  }
+  .right-panel::-webkit-scrollbar-track,
+  .chat-messages::-webkit-scrollbar-track,
+  .build-panel .eligible-list::-webkit-scrollbar-track,
+  .saved-list::-webkit-scrollbar-track,
+  .sidebar-overview::-webkit-scrollbar-track,
+  .modal::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .right-panel::-webkit-scrollbar-thumb,
+  .chat-messages::-webkit-scrollbar-thumb,
+  .build-panel .eligible-list::-webkit-scrollbar-thumb,
+  .saved-list::-webkit-scrollbar-thumb,
+  .sidebar-overview::-webkit-scrollbar-thumb,
+  .modal::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
+  }
+  .right-panel::-webkit-scrollbar-thumb:hover,
+  .chat-messages::-webkit-scrollbar-thumb:hover,
+  .build-panel .eligible-list::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.22);
+  }
+
+  /* ── UI elements that use var(--maroon) as text/accent — needs lighter value on dark ── */
+  .mode-tab.active {
+    color: #e89898;
+    border-bottom-color: #e89898;
+  }
+  .bp-chip.active {
+    border-color: rgba(230, 130, 130, 0.45);
+    background: rgba(180, 60, 60, 0.18);
+    color: #f0a8a8;
+  }
+  .bp-chip:hover {
+    border-color: rgba(220, 120, 120, 0.4);
+    color: #f0a8a8;
+  }
+  .bp-icon-btn:hover {
+    color: #f0a8a8;
+    border-color: rgba(220, 120, 120, 0.4);
+    background: rgba(180, 60, 60, 0.08);
+  }
+  .ai-lock-all-btn {
+    border-color: rgba(230, 130, 130, 0.35);
+    background: rgba(180, 60, 60, 0.12);
+    color: #f0a8a8;
+  }
+  .ai-lock-all-btn:hover {
+    background: rgba(180, 60, 60, 0.22);
+    border-color: rgba(230, 130, 130, 0.5);
+  }
+  .eligible-meta {
+    color: var(--text3);
+  }
+  /* View-registered item */
+  .view-registered,
+  .saved-item-registered {
+    color: #e89898;
+  }
+  .new-plan-icon {
+    color: #e89898;
+  }
+  .modal-title {
+    color: #e89898;
+  }
+  .sidebar-link:hover {
+    color: #e89898;
+  }
+  .manual-link-btn:hover {
+    color: #e89898;
   }
 
   /* ── Schedule pills ── */

@@ -167,7 +167,8 @@ let newPlanClickTimer = null;
 const START_HOUR = 7;
 const END_HOUR = 22;
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
-const PX_PER_HOUR = 52;
+let PX_PER_HOUR = 52;
+const PX_STEPS = [30, 38, 52, 68]; // zoom levels: -2 → +1
 
 // ── MODAL METADATA ────────────────────────────────────────
 const calendarCourseMetaByCrn = new Map();
@@ -923,6 +924,22 @@ if (importBtn) {
 }
 
 // ============================================================
+// CALENDAR ZOOM (Fix 6)
+// ============================================================
+function applyZoom() {
+  document.documentElement.style.setProperty("--cell-h", PX_PER_HOUR + "px");
+  renderCalendarFromWorkingCourses();
+  const zoomOut = document.getElementById("zoomOut");
+  const zoomIn = document.getElementById("zoomIn");
+  if (zoomOut) zoomOut.disabled = PX_STEPS.indexOf(PX_PER_HOUR) <= 0;
+  if (zoomIn) zoomIn.disabled = PX_STEPS.indexOf(PX_PER_HOUR) >= PX_STEPS.length - 1;
+}
+const zoomOut = document.getElementById("zoomOut");
+const zoomIn = document.getElementById("zoomIn");
+if (zoomOut) zoomOut.addEventListener("click", () => { const i = PX_STEPS.indexOf(PX_PER_HOUR); if (i > 0) { PX_PER_HOUR = PX_STEPS[i - 1]; applyZoom(); } });
+if (zoomIn) zoomIn.addEventListener("click", () => { const i = PX_STEPS.indexOf(PX_PER_HOUR); if (i < PX_STEPS.length - 1) { PX_PER_HOUR = PX_STEPS[i + 1]; applyZoom(); } });
+
+// ============================================================
 // SAML / getCurrentSchedule
 // ============================================================
 
@@ -1260,10 +1277,10 @@ function renderCalendarFromWorkingCourses() {
     }
   }
 
-  // Show or clear conflict warning after every calendar render
-  updateConflictStatus();
   // Keep AI toolbar lock count in sync
   renderAIToolbar();
+  // Conflict check deferred so it always wins over any status messages set by callers
+  setTimeout(updateConflictStatus, 0);
 }
 
 // ============================================================
@@ -1487,35 +1504,41 @@ function renderEligibleList() {
       const courseTitle = course.sections[0]?.courseTitle?.replace(/&amp;/g, "&")?.replace(/&#39;/g, "'") || "";
       if (courseTitle) { const titleEl = document.createElement("div"); titleEl.className = "eligible-course-title"; titleEl.textContent = courseTitle; body.appendChild(titleEl); }
       const seenCrns = new Set();
-      const sections = (course.sections || []).filter((s) => { const crn = String(s.courseReferenceNumber || ""); if (!crn || seenCrns.has(crn)) return false; seenCrns.add(crn); return true; });
-      const currentIdx = selectedSectionByCourse[key] ?? 0;
-      sections.forEach((s, i) => {
-        const lbl = document.createElement("label");
-        lbl.className = "manual-result-row";
-        lbl.innerHTML = '<input type="radio" name="sec-' + key + '" data-idx="' + i + '" ' + (i === currentIdx ? "checked" : "") + "> " + formatSectionOneLine(s);
-        lbl.querySelector("input").addEventListener("change", () => { selectedSectionByCourse[key] = i; });
-        body.appendChild(lbl);
-      });
-      const addBtn = document.createElement("button");
-      addBtn.type = "button"; addBtn.className = "manual-small-btn"; addBtn.style.marginTop = "4px";
-      addBtn.textContent = alreadyAdded ? "Replace on calendar" : "Add to calendar";
-      addBtn.addEventListener("click", () => {
-        const idx = selectedSectionByCourse[key] ?? 0, section = sections[idx];
-        if (!section) return;
-        const crn = String(section.courseReferenceNumber || "");
-        if (!crn) { $("statusBar").textContent = "Section has no CRN."; return; }
-        const mt = section.meetingsFaculty?.[0]?.meetingTime;
-        const days = [];
-        if (mt?.monday) days.push("Mon"); if (mt?.tuesday) days.push("Tue"); if (mt?.wednesday) days.push("Wed"); if (mt?.thursday) days.push("Thu"); if (mt?.friday) days.push("Fri");
-        const beginTime = mt?.beginTime ? mt.beginTime.slice(0, 2) + ":" + mt.beginTime.slice(2) : null;
-        const endTime = mt?.endTime ? mt.endTime.slice(0, 2) + ":" + mt.endTime.slice(2) : null;
-        addToWorkingSchedule({ crn, subject: course.subject, courseNumber: course.courseNumber, title: section.courseTitle || course.sections[0]?.courseTitle || "", days, beginTime, endTime, source: "manual", online: section.instructionalMethod === "INT" });
-        expandedCourseKey = null;
-        $("statusBar").textContent = "Added " + course.subject + " " + course.courseNumber + " to calendar.";
-        renderEligibleList(); updateSaveBtn();
-      });
-      body.appendChild(addBtn);
-      item.appendChild(body);
+      let sections = (course.sections || []).filter((s) => { const crn = String(s.courseReferenceNumber || ""); if (!crn || seenCrns.has(crn)) return false; seenCrns.add(crn); return true; });
+      // Fix 2: also hide closed sections when Open Only is active
+      if (showOpenSeatsOnly) sections = sections.filter((s) => s.openSection);
+      if (!sections.length) { expandedCourseKey = null; }
+      else {
+        sections.forEach((s) => {
+          const crn = String(s.courseReferenceNumber || "");
+          const isOnCalendar = workingCourses.some((c) => String(c.crn) === crn);
+          // Fix 3: click-to-toggle row — no radio buttons, no Add button
+          const row = document.createElement("div");
+          row.className = "section-toggle-row" + (isOnCalendar ? " on-calendar" : "") + (!s.openSection ? " no-seats" : "");
+          const check = document.createElement("span");
+          check.className = "section-check";
+          check.textContent = isOnCalendar ? "✓" : "";
+          const info = document.createElement("span");
+          info.textContent = formatSectionOneLine(s);
+          row.appendChild(check); row.appendChild(info);
+          row.addEventListener("click", () => {
+            if (isOnCalendar) {
+              removeFromWorkingSchedule(crn);
+            } else {
+              const mt = s.meetingsFaculty?.[0]?.meetingTime;
+              const days = [];
+              if (mt?.monday) days.push("Mon"); if (mt?.tuesday) days.push("Tue"); if (mt?.wednesday) days.push("Wed"); if (mt?.thursday) days.push("Thu"); if (mt?.friday) days.push("Fri");
+              const beginTime = mt?.beginTime ? mt.beginTime.slice(0, 2) + ":" + mt.beginTime.slice(2) : null;
+              const endTime = mt?.endTime ? mt.endTime.slice(0, 2) + ":" + mt.endTime.slice(2) : null;
+              addToWorkingSchedule({ crn, subject: course.subject, courseNumber: course.courseNumber, title: s.courseTitle || course.sections[0]?.courseTitle || "", days, beginTime, endTime, source: "manual", online: s.instructionalMethod === "INT" });
+              expandedCourseKey = null;
+            }
+            renderEligibleList(); updateSaveBtn();
+          });
+          body.appendChild(row);
+        });
+        item.appendChild(body);
+      }
     }
     list.appendChild(item);
   });
