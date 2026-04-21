@@ -380,6 +380,7 @@ SCHEMA (return EXACTLY this shape — never omit fields, use null/[] where unkno
     "careerAffinityWeight": 0.0-1.0 | null,
     "avoidDayWeight": 0.0-1.0 | null,
     "morningCutoffWeight": 0.0-1.0 | null,
+    "lateCutoffWeight": 0.0-1.0 | null,
     "freeTextPreferences": "any extra nuance, career aspirations, instructor preferences"
   },
   "referencesSuggestion": "GEO 2342" | null,
@@ -397,6 +398,7 @@ WEIGHT CALIBRATION (read carefully — this drives the solver):
 - If a preference is stated but intensity unclear, default to 0.6.
 - "I work Mon 5pm" = 1.0 hard block (person can't teleport).
 - "no mornings" = 0.6 default; "absolutely no mornings" = 1.0.
+- "done by 5pm" / "out by 5" / "finish by 3" → noLaterThan: "1700" / "1500", lateCutoffWeight 0.6-0.8.
 - "cybersecurity goal, open to anything" = careerAffinityWeight ~0.5 (soft bias).
 
 CAREER KEYWORD EXPANSION:
@@ -493,10 +495,12 @@ Existing avoid days: ${JSON.stringify(studentProfile.avoidDays)}${ragSection}
     const prefs = intent.statedPreferences;
     const dayNames = ["monday","tuesday","wednesday","thursday","friday","mon ","tue ","wed ","thu ","fri "];
     const morningKw = ["morning","before 8","before 9","before 10","before 11","before noon","am ","early"," early"];
+    const lateKw = ["done by","end by","finish by","out by","over by","home by","evening","night","late","after 5","after 6","after 7","pm "];
     const onlineKw = ["online","remote","async","asynchronous","in person","in-person","on campus"];
     const careerKw = ["career","goal","into ","interested","passionate","love","hate","want to","plan to"];
 
     prefs.morningCutoffWeight = _calibrate(prefs.morningCutoffWeight, _clausesMentioning(userMessage, morningKw));
+    prefs.lateCutoffWeight = _calibrate(prefs.lateCutoffWeight, _clausesMentioning(userMessage, lateKw));
     prefs.avoidDayWeight = _calibrate(prefs.avoidDayWeight, _clausesMentioning(userMessage, dayNames));
     prefs.onlineWeight = _calibrate(prefs.onlineWeight, _clausesMentioning(userMessage, onlineKw));
     prefs.careerAffinityWeight = _calibrate(prefs.careerAffinityWeight, _clausesMentioning(userMessage, careerKw));
@@ -844,7 +848,7 @@ ${JSON.stringify(compressed, null, 2)}
   function scoreSchedule(result, preferences, affinityScores) {
     const picks = result.picks;
     const n = picks.length || 1;
-    let affinitySum = 0, onlineCount = 0, morningPenalty = 0, softAvoidPenalty = 0;
+    let affinitySum = 0, onlineCount = 0, morningPenalty = 0, softAvoidPenalty = 0, latePenalty = 0;
     const dayLoad = { Mon: 0, Tue: 0, Wed: 0, Thu: 0, Fri: 0 };
 
     for (const p of picks) {
@@ -856,6 +860,13 @@ ${JSON.stringify(compressed, null, 2)}
         const start = toMinutes(p.section.start);
         if (start != null && cutoff != null && start < cutoff) {
           morningPenalty += (cutoff - start) / 60; // hours below cutoff
+        }
+      }
+      if (!p.section.online && preferences.noLaterThan) {
+        const cutoff = toMinutes(preferences.noLaterThan);
+        const end = toMinutes(p.section.end);
+        if (end != null && cutoff != null && end > cutoff) {
+          latePenalty += (end - cutoff) / 60; // hours past cutoff
         }
       }
       if (!p.section.online && (preferences.softAvoidDays || []).length) {
@@ -882,7 +893,7 @@ ${JSON.stringify(compressed, null, 2)}
       : 0;
 
     return {
-      affinityNorm, onlineRatio, morningPenalty, softAvoidPenalty, balance,
+      affinityNorm, onlineRatio, morningPenalty, latePenalty, softAvoidPenalty, balance,
       creditTargetDist, dayLoad,
     };
   }
@@ -892,15 +903,15 @@ ${JSON.stringify(compressed, null, 2)}
   const WEIGHT_VECTORS = {
     affinity: {
       affinity: 1.0, online: 0.2, balance: 0.1,
-      morning: 0.3, avoidDay: 0.6, creditTarget: 0.4,
+      morning: 0.3, late: 0.3, avoidDay: 0.6, creditTarget: 0.4,
     },
     online: {
       affinity: 0.3, online: 1.0, balance: 0.1,
-      morning: 0.3, avoidDay: 0.6, creditTarget: 0.4,
+      morning: 0.3, late: 0.3, avoidDay: 0.6, creditTarget: 0.4,
     },
     balanced: {
       affinity: 0.4, online: 0.2, balance: 1.0,
-      morning: 0.3, avoidDay: 0.6, creditTarget: 0.4,
+      morning: 0.3, late: 0.3, avoidDay: 0.6, creditTarget: 0.4,
     },
   };
 
@@ -909,9 +920,10 @@ ${JSON.stringify(compressed, null, 2)}
     const affinityTerm = (prefs.careerAffinityWeight ?? 0.5) * vec.affinity * metrics.affinityNorm;
     const balanceTerm = vec.balance * metrics.balance;
     const morningPen = (prefs.morningCutoffWeight ?? 0.5) * vec.morning * metrics.morningPenalty;
+    const latePen = (prefs.lateCutoffWeight ?? 0.5) * vec.late * metrics.latePenalty;
     const softAvoidPen = (prefs.avoidDayWeight ?? 0.5) * vec.avoidDay * metrics.softAvoidPenalty;
     const creditPen = vec.creditTarget * metrics.creditTargetDist;
-    return affinityTerm + onlineTerm + balanceTerm - morningPen - softAvoidPen - creditPen;
+    return affinityTerm + onlineTerm + balanceTerm - morningPen - latePen - softAvoidPen - creditPen;
   }
 
   function pickTop3(results, preferences, affinityScores) {
@@ -1093,6 +1105,11 @@ ${JSON.stringify(compressed, null, 2)}
         condition: () => (workingPrefs.noEarlierThan && (workingPrefs.morningCutoffWeight ?? 0.5) < 1.0),
       },
       {
+        label: "allowing classes to run past cutoff",
+        apply: () => { workingPrefs.noLaterThan = null; workingPrefs.lateCutoffWeight = 0; },
+        condition: () => (workingPrefs.noLaterThan && (workingPrefs.lateCutoffWeight ?? 0.5) < 1.0),
+      },
+      {
         label: "allowing classes on avoid-days",
         apply: () => { constraints.hardAvoidDays = []; workingPrefs.avoidDayWeight = 0; },
         condition: () => constraints.hardAvoidDays.length > 0,
@@ -1174,6 +1191,8 @@ ${JSON.stringify(compressed, null, 2)}
       honored.push(`${Math.round(topSchedule.metrics.onlineRatio * picks.length)}/${picks.length} online`);
     if (preferences.noEarlierThan && topSchedule.metrics.morningPenalty === 0)
       honored.push(`no classes before ${preferences.noEarlierThan}`);
+    if (preferences.noLaterThan && topSchedule.metrics.latePenalty === 0)
+      honored.push(`done by ${preferences.noLaterThan}`);
     const avoidList = preferences.softAvoidDays || [];
     if (avoidList.length && topSchedule.metrics.softAvoidPenalty === 0)
       honored.push(`kept ${avoidList.join(", ")} clear`);
@@ -1186,6 +1205,8 @@ ${JSON.stringify(compressed, null, 2)}
     const unhonored = [];
     if (preferences.noEarlierThan && topSchedule.metrics.morningPenalty > 0)
       unhonored.push(`some classes start before ${preferences.noEarlierThan}`);
+    if (preferences.noLaterThan && topSchedule.metrics.latePenalty > 0)
+      unhonored.push(`some classes run past ${preferences.noLaterThan}`);
     const dayLoad = topSchedule.metrics.dayLoad || {};
     const violatedAvoid = avoidList.filter((d) => (dayLoad[d] || 0) > 0);
     if (violatedAvoid.length)
