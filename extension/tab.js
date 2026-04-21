@@ -2160,6 +2160,20 @@ function applyAction(action) {
       addMessage("system", "Marked " + action.day + " as a day to keep class-free.");
       return "[Marked " + action.day + " as avoid day]";
     }
+    case "remove_avoid_day": {
+      removeAvoidDay(action.day);
+      addMessage("system", "Cleared " + action.day + " — classes allowed again.");
+      return "[Cleared avoid day " + action.day + "]";
+    }
+    case "reset_avoid_days": {
+      const prior = avoidDays.slice();
+      avoidDays = [];
+      chrome.storage.local.set({ avoidDays });
+      if (studentProfile) studentProfile.avoidDays = avoidDays;
+      renderCalendarFromWorkingCourses();
+      if (prior.length) addMessage("system", "Reset kept-clear days (was " + prior.join(", ") + ").");
+      return "[Reset avoid days]";
+    }
     case "lock_course": {
       lockedCrns.add(String(action.crn));
       renderCalendarFromWorkingCourses();

@@ -366,6 +366,8 @@ SCHEMA (return EXACTLY this shape — never omit fields, use null/[] where unkno
     { "label": "Work", "days": ["Tue","Thu"], "start": "1700", "end": "2200" }
   ],
   "newAvoidDays": ["Fri"],
+  "removeAvoidDays": ["Mon","Wed"],
+  "resetAvoidDays": false,
   "statedPreferences": {
     "noEarlierThan": "HHMM" | null,
     "noLaterThan":  "HHMM" | null,
@@ -409,6 +411,22 @@ CALENDAR BLOCK EXTRACTION:
 Non-course time commitments (work, commute, therapy, childcare). Infer reasonable windows
 generously: "I work late Tuesdays" → Tue 1700-2200. Only include NEW blocks; existing
 blocks in the profile are already saved.
+
+AVOID-DAY EXTRACTION (includes POSITIVE FRAMING):
+- "keep Friday clear" / "no Monday classes" → newAvoidDays: ["Fri"] / ["Mon"]
+- POSITIVE framing like "only on Tue and Thu" / "just T/Th" / "put everything on Tuesday
+  and Thursday" means the OTHER weekdays are avoid days. For "only Tue/Thu" emit
+  newAvoidDays: ["Mon","Wed","Fri"]. For "only on MWF" emit newAvoidDays: ["Tue","Thu"].
+- Reset language like "actually", "instead", "nevermind", "let's just do", "now just",
+  "forget that" in combination with a new day preference signals the student is REPLACING
+  their prior avoid days, not adding. In that case:
+    • set resetAvoidDays: true (the orchestrator wipes existing avoidDays)
+    • emit only the NEW avoid days in newAvoidDays
+  Example: prior avoidDays=["Mon","Wed","Fri"], user says "actually just no Friday" →
+    resetAvoidDays: true, newAvoidDays: ["Fri"], removeAvoidDays: []
+- Explicit removal like "I can do Mondays again" / "drop the Wednesday block" →
+  removeAvoidDays: ["Mon"] / ["Wed"]. Do not set resetAvoidDays here.
+- Default: resetAvoidDays: false, removeAvoidDays: [].
 
 RECAP DISCIPLINE:
 The recap is one sentence the student will see for confirmation. Include: new blocks,
@@ -502,6 +520,8 @@ Existing avoid days: ${JSON.stringify(studentProfile.avoidDays)}${ragSection}
       // Minimal shape normalization so downstream code can trust fields
       json.newCalendarBlocks = Array.isArray(json.newCalendarBlocks) ? json.newCalendarBlocks : [];
       json.newAvoidDays = Array.isArray(json.newAvoidDays) ? json.newAvoidDays : [];
+      json.removeAvoidDays = Array.isArray(json.removeAvoidDays) ? json.removeAvoidDays : [];
+      json.resetAvoidDays = json.resetAvoidDays === true;
       json.lockCRNs = Array.isArray(json.lockCRNs) ? json.lockCRNs : [];
       json.unlockCRNs = Array.isArray(json.unlockCRNs) ? json.unlockCRNs : [];
       json.ambiguities = Array.isArray(json.ambiguities) ? json.ambiguities : [];
@@ -1416,11 +1436,17 @@ ${profile}${rag}
     // Rescue weight calibration with deterministic hedge/hard overrides.
     calibrateIntentWeights(intent, userMessage);
 
-    // Merge new blocks/avoid days into a working profile
+    // Merge avoid-day changes into a working profile. Order matters:
+    // (1) reset wipes prior days if the student used reset-style language,
+    // (2) explicit removals drop specific days,
+    // (3) new additions are appended.
+    const baseAvoid = intent.resetAvoidDays
+      ? []
+      : (studentProfile.avoidDays || []).filter((d) => !(intent.removeAvoidDays || []).includes(d));
     const updatedProfile = {
       ...studentProfile,
       calendarBlocks: mergeCalendarBlocks(studentProfile.calendarBlocks, intent.newCalendarBlocks || []),
-      avoidDays: Array.from(new Set([...(studentProfile.avoidDays || []), ...(intent.newAvoidDays || [])])),
+      avoidDays: Array.from(new Set([...baseAvoid, ...(intent.newAvoidDays || [])])),
     };
 
     // Context recap fires before expensive work so student can catch misreads
@@ -1431,7 +1457,12 @@ ${profile}${rag}
       confidence: intent.confidence ?? 1,
     });
 
-    // Emit block/avoid-day actions immediately so extension persists & renders
+    // Emit block/avoid-day actions immediately so extension persists & renders.
+    // Reset + removals come first so they take effect before additions on the
+    // same turn (otherwise the remove could wipe a day the user just re-added).
+    if (intent.resetAvoidDays) actions.push({ type: "reset_avoid_days" });
+    for (const day of intent.removeAvoidDays || [])
+      actions.push({ type: "remove_avoid_day", day });
     for (const block of intent.newCalendarBlocks || [])
       actions.push({ type: "add_calendar_block", block });
     for (const day of intent.newAvoidDays || [])
