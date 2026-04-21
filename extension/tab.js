@@ -1202,9 +1202,13 @@ function buildEmptyCalendar() {
   const avoidSet = new Set(avoidDays || []);
   let html = '<tr><th class="time-col">Time</th>';
   DAYS.forEach((d, i) => {
-    const avoidCls = avoidSet.has(shortDays[i]) ? " avoid-day-header" : "";
-    html += '<th class="' + avoidCls.trim() + '">' + d +
-      (avoidCls ? '<span class="avoid-day-tag">Kept clear</span>' : "") + "</th>";
+    const short = shortDays[i];
+    const isAvoid = avoidSet.has(short);
+    const avoidCls = isAvoid ? " avoid-day-header" : "";
+    const tag = isAvoid
+      ? '<span class="avoid-day-tag">Kept clear<button class="avoid-day-remove" data-day="' + short + '" title="Remove this block" aria-label="Remove ' + short + ' from kept-clear days">×</button></span>'
+      : "";
+    html += '<th class="' + avoidCls.trim() + '">' + d + tag + "</th>";
   });
   html += "</tr>";
   for (let h = START_HOUR; h < END_HOUR; h++) {
@@ -1217,6 +1221,12 @@ function buildEmptyCalendar() {
     html += "</tr>";
   }
   $("calendar").innerHTML = html;
+  $("calendar").querySelectorAll(".avoid-day-remove").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      removeAvoidDay(btn.dataset.day);
+    });
+  });
 }
 
 function assignOverlapColumns(cellItems) {
@@ -1929,6 +1939,15 @@ function removeCalendarBlock(label) {
 function applyNewAvoidDay(day) {
   if (!day || avoidDays.includes(day)) return;
   avoidDays = [...avoidDays, day];
+  chrome.storage.local.set({ avoidDays });
+  if (studentProfile) studentProfile.avoidDays = avoidDays;
+  renderCalendarFromWorkingCourses();
+}
+
+// Remove an avoid-day and keep profile + storage in sync.
+function removeAvoidDay(day) {
+  if (!day || !avoidDays.includes(day)) return;
+  avoidDays = avoidDays.filter((d) => d !== day);
   chrome.storage.local.set({ avoidDays });
   if (studentProfile) studentProfile.avoidDays = avoidDays;
   renderCalendarFromWorkingCourses();
