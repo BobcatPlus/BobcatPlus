@@ -1326,6 +1326,11 @@ ${profile}${rag}
     const trace = createTrace(onTrace);
     const actions = [];
 
+    // Reset career-signal state per turn so stale affinity scores from a
+    // prior prompt can't bias this turn's ranking. The solver + affinity
+    // pipeline re-derives everything from the current message's intent.
+    affinityCache.clear();
+
     // Stage 1: Intent
     const intent = await callIntent({ userMessage, studentProfile, ragChunks, apiKey, trace });
 
