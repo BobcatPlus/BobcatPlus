@@ -1198,13 +1198,22 @@ function enterNewPlanEditMode() {
 
 function buildEmptyCalendar() {
   clearCalendarCourseMeta();
+  const shortDays = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+  const avoidSet = new Set(avoidDays || []);
   let html = '<tr><th class="time-col">Time</th>';
-  DAYS.forEach((d) => { html += "<th>" + d + "</th>"; });
+  DAYS.forEach((d, i) => {
+    const avoidCls = avoidSet.has(shortDays[i]) ? " avoid-day-header" : "";
+    html += '<th class="' + avoidCls.trim() + '">' + d +
+      (avoidCls ? '<span class="avoid-day-tag">Kept clear</span>' : "") + "</th>";
+  });
   html += "</tr>";
   for (let h = START_HOUR; h < END_HOUR; h++) {
     const label = (h > 12 ? h - 12 : h) + ":00 " + (h >= 12 ? "PM" : "AM");
     html += '<tr><td class="time-label">' + label + "</td>";
-    for (let d = 0; d < 5; d++) html += '<td id="cell-' + d + "-" + h + '"></td>';
+    for (let d = 0; d < 5; d++) {
+      const avoidCls = avoidSet.has(shortDays[d]) ? " avoid-day-cell" : "";
+      html += '<td id="cell-' + d + "-" + h + '" class="' + avoidCls.trim() + '"></td>';
+    }
     html += "</tr>";
   }
   $("calendar").innerHTML = html;
@@ -1799,29 +1808,43 @@ function renderSavedScheduleOnCalendar(schedule) {
 function renderAIToolbar() {
   const hintEl = $("aiToolbarHint");
   const btn = $("aiLockAllBtn");
+  const clearBtn = $("aiClearAllBtn");
   if (!hintEl || !btn) return;
 
   const total = workingCourses.length;
   const locked = workingCourses.filter((c) => lockedCrns.has(String(c.crn))).length;
+  const unlocked = total - locked;
   const allLocked = total > 0 && locked === total;
 
   if (total === 0) {
-    hintEl.textContent = "Add courses in Build mode so the AI can see them";
+    hintEl.textContent = "Add courses in Build mode first so the AI has something to work around";
     btn.disabled = true;
+    if (clearBtn) clearBtn.disabled = true;
   } else if (allLocked) {
-    hintEl.textContent = "All " + total + " course" + (total !== 1 ? "s" : "") + " locked — AI can see them";
+    hintEl.textContent = "All " + total + " course" + (total !== 1 ? "s" : "") + " locked — AI will build around them";
     btn.disabled = true;
+    if (clearBtn) clearBtn.disabled = false;
   } else {
-    const unlocked = total - locked;
-    hintEl.textContent = locked > 0 ? locked + "/" + total + " locked" : unlocked + " unlocked course" + (unlocked !== 1 ? "s" : "") + " — AI won't see them";
+    hintEl.textContent = locked > 0
+      ? locked + " of " + total + " locked · AI may replace the other " + unlocked
+      : unlocked + " course" + (unlocked !== 1 ? "s" : "") + " unlocked · AI may replace " + (unlocked !== 1 ? "them" : "it");
     btn.disabled = false;
+    if (clearBtn) clearBtn.disabled = false;
   }
 }
 
 $("aiLockAllBtn")?.addEventListener("click", () => {
   for (const c of workingCourses) lockedCrns.add(String(c.crn));
   renderCalendarFromWorkingCourses();
-  addMessage("system", lockedCrns.size + " course" + (lockedCrns.size !== 1 ? "s" : "") + " locked. The AI can now see your full schedule.");
+});
+
+$("aiClearAllBtn")?.addEventListener("click", () => {
+  const removable = workingCourses.filter((c) => c.source !== "registered");
+  if (!removable.length) return;
+  workingCourses = workingCourses.filter((c) => c.source === "registered");
+  lockedCrns = new Set([...lockedCrns].filter((crn) => workingCourses.some((c) => String(c.crn) === crn)));
+  renderCalendarFromWorkingCourses();
+  updateSaveBtn();
 });
 
 // ============================================================
@@ -1873,6 +1896,7 @@ function applyNewAvoidDay(day) {
   avoidDays = [...avoidDays, day];
   chrome.storage.local.set({ avoidDays });
   if (studentProfile) studentProfile.avoidDays = avoidDays;
+  renderCalendarFromWorkingCourses();
 }
 
 // Look up the credit value for a CRN in the cached eligible data.
