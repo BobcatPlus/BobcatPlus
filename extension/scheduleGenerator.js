@@ -84,47 +84,102 @@
       .trim();
   }
 
+  // TXST numbering convention: the second digit of a 4-digit course number
+  // typically encodes credit hours (e.g. BIO 1331 = 3 cr lecture, BIO 1131 =
+  // 1 cr lab). Use as a last-resort fallback when Banner data is missing.
+  function creditsFromCourseNumber(num) {
+    const s = String(num || "");
+    const m = s.match(/^(\d)(\d)/);
+    if (!m) return null;
+    const digit = parseInt(m[2], 10);
+    return digit >= 1 && digit <= 6 ? digit : null;
+  }
+
+  function deriveCredits(section, courseNumber) {
+    if (section.creditHourLow != null && section.creditHourLow > 0) return section.creditHourLow;
+    if (section.creditHourHigh != null && section.creditHourHigh > 0) return section.creditHourHigh;
+    const fromNumber = creditsFromCourseNumber(courseNumber);
+    if (fromNumber != null) return fromNumber;
+    return 3;
+  }
+
+  // Lab-pair detection by TXST numbering convention: a lecture (e.g. BIO 1331,
+  // 3 cr) and its lab (BIO 1131, 1 cr) share the same subject, the same first
+  // digit (level), and the same last two digits (sequence), but different
+  // second digits (credit hours). The pair is enforced in the solver so the
+  // student never gets a lab without its lecture or vice versa.
+  function labPartnerCandidate(courseName) {
+    // Returns an array of possible partner course names ordered by likelihood.
+    const m = courseName.match(/^([A-Z]+)\s+(\d)(\d)(\d{2})$/);
+    if (!m) return [];
+    const [, subj, first, second, tail] = m;
+    const candidates = [];
+    // Same level, same sequence, different 2nd digit. Try common pairings:
+    // 3↔1 (3cr lec ↔ 1cr lab) and 4↔1 (4cr lec ↔ 1cr lab) and 3↔2 rare.
+    const thisDigit = parseInt(second, 10);
+    const partners = thisDigit === 1 ? [3, 4] : thisDigit === 3 ? [1] : thisDigit === 4 ? [1] : [];
+    for (const d of partners) candidates.push(`${subj} ${first}${d}${tail}`);
+    return candidates;
+  }
+
+  function annotateLabPairs(eligibleCourses) {
+    const byName = new Map(eligibleCourses.map((c) => [c.course, c]));
+    for (const course of eligibleCourses) {
+      if (course.pairedCourse) continue;
+      for (const candidate of labPartnerCandidate(course.course)) {
+        if (byName.has(candidate)) {
+          course.pairedCourse = candidate;
+          byName.get(candidate).pairedCourse = course.course;
+          break;
+        }
+      }
+    }
+    return eligibleCourses;
+  }
+
   function compressForSolver(rawData) {
-    return {
-      eligible: (rawData.eligible || [])
-        .map((course) => {
-          const description = stripHtml(course.sections[0]?.courseDescription);
-          const openSections = course.sections
-            .filter((s) => s.openSection)
-            .map((s) => {
-              const mt = s.meetingsFaculty[0]?.meetingTime;
-              const days = [];
-              if (mt?.monday) days.push("Mon");
-              if (mt?.tuesday) days.push("Tue");
-              if (mt?.wednesday) days.push("Wed");
-              if (mt?.thursday) days.push("Thu");
-              if (mt?.friday) days.push("Fri");
-              return {
-                crn: String(s.courseReferenceNumber),
-                online: s.instructionalMethod === "INT",
-                days: days.length ? days : null,
-                start: mt?.beginTime || null,
-                end: mt?.endTime || null,
-                seatsAvailable: s.seatsAvailable,
-                instructor:
-                  s.faculty[0]?.displayName !== "Faculty, Unassigned"
-                    ? s.faculty[0]?.displayName
-                    : null,
-                credits: s.creditHourLow ?? 3,
-              };
-            });
-          return {
-            course: `${course.subject} ${course.courseNumber}`,
-            title: course.sections[0]?.courseTitle
-              ?.replace(/&amp;/g, "&")
-              ?.replace(/&#39;/g, "'"),
-            requirementLabel: course.label,
-            description,
-            sections: openSections,
-          };
-        })
-        .filter((c) => c.sections.length > 0),
-    };
+    const eligible = (rawData.eligible || [])
+      .map((course) => {
+        const description = stripHtml(course.sections[0]?.courseDescription);
+        const openSections = course.sections
+          .filter((s) => s.openSection)
+          .map((s) => {
+            const mt = s.meetingsFaculty[0]?.meetingTime;
+            const days = [];
+            if (mt?.monday) days.push("Mon");
+            if (mt?.tuesday) days.push("Tue");
+            if (mt?.wednesday) days.push("Wed");
+            if (mt?.thursday) days.push("Thu");
+            if (mt?.friday) days.push("Fri");
+            return {
+              crn: String(s.courseReferenceNumber),
+              online: s.instructionalMethod === "INT",
+              days: days.length ? days : null,
+              start: mt?.beginTime || null,
+              end: mt?.endTime || null,
+              seatsAvailable: s.seatsAvailable,
+              instructor:
+                s.faculty[0]?.displayName !== "Faculty, Unassigned"
+                  ? s.faculty[0]?.displayName
+                  : null,
+              credits: deriveCredits(s, course.courseNumber),
+              scheduleType: s.scheduleType || null,
+            };
+          });
+        return {
+          course: `${course.subject} ${course.courseNumber}`,
+          title: course.sections[0]?.courseTitle
+            ?.replace(/&amp;/g, "&")
+            ?.replace(/&#39;/g, "'"),
+          requirementLabel: course.label,
+          description,
+          sections: openSections,
+          pairedCourse: null,
+        };
+      })
+      .filter((c) => c.sections.length > 0);
+    annotateLabPairs(eligible);
+    return { eligible };
   }
 
   function buildStudentProfile({
@@ -630,6 +685,11 @@ ${JSON.stringify(compressed, null, 2)}
     const results = [];
     let nodes = 0;
 
+    // Index lookup for lab-pair constraints. Course order may have been
+    // shuffled by ordering strategy, so we compute indices after sorting.
+    const courseIdxByName = new Map();
+    perCourse.forEach((pc, i) => courseIdxByName.set(pc.course.course, i));
+
     function recurse(idx, picked, credits) {
       nodes++;
       if (nodes > SOLVER_NODE_CAP) return;
@@ -647,28 +707,51 @@ ${JSON.stringify(compressed, null, 2)}
 
       if (idx === perCourse.length) {
         if (credits >= minCredits && picked.length >= minCourses) {
-          results.push({ picks: picked.slice(), credits });
+          // Final pair validation: every picked course whose pair is in the
+          // eligible set must have its partner also picked.
+          const pickedNames = new Set(picked.map((p) => p.courseObj.course));
+          let pairOk = true;
+          for (const p of picked) {
+            const partner = p.courseObj.pairedCourse;
+            if (partner && courseIdxByName.has(partner) && !pickedNames.has(partner)) {
+              pairOk = false;
+              break;
+            }
+          }
+          if (pairOk) results.push({ picks: picked.slice(), credits });
         }
         return;
       }
+
+      // Lab-pair pruning: consult partner's decision state before branching.
+      const { course, viable } = perCourse[idx];
+      const partner = course.pairedCourse;
+      const partnerIdx = partner ? courseIdxByName.get(partner) : undefined;
+      const partnerDecided = partnerIdx !== undefined && partnerIdx < idx;
+      const partnerPicked = partnerDecided && picked.some((p) => p.courseObj.course === partner);
+      const mustPickToHonorPair = partnerDecided && partnerPicked;   // partner picked → must pick
+      const mustSkipToHonorPair = partnerDecided && !partnerPicked;  // partner skipped → must skip
 
       // Pick branches FIRST so DFS reaches leaves fast — the first complete
       // assignment gets scored / credit-bounded immediately, which prunes
       // sibling subtrees aggressively. Skip-first wastes the node budget on
       // dead paths (picked stays < minCourses for most of the tree).
-      const { course, viable } = perCourse[idx];
-      for (const sec of viable) {
-        let ok = true;
-        for (const p of picked) if (sectionsConflict(sec, p.section)) { ok = false; break; }
-        if (!ok) continue;
-        picked.push({ courseObj: course, section: sec });
-        recurse(idx + 1, picked, credits + (sec.credits ?? 3));
-        picked.pop();
-        if (results.length >= SOLVER_RESULT_CAP) return;
+      if (!mustSkipToHonorPair) {
+        for (const sec of viable) {
+          let ok = true;
+          for (const p of picked) if (sectionsConflict(sec, p.section)) { ok = false; break; }
+          if (!ok) continue;
+          picked.push({ courseObj: course, section: sec });
+          recurse(idx + 1, picked, credits + (sec.credits ?? 3));
+          picked.pop();
+          if (results.length >= SOLVER_RESULT_CAP) return;
+        }
       }
 
       // Skip branch last
-      recurse(idx + 1, picked, credits);
+      if (!mustPickToHonorPair) {
+        recurse(idx + 1, picked, credits);
+      }
     }
 
     recurse(0, [], 0);
