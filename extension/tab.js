@@ -1354,10 +1354,45 @@ function renderCalendarFromWorkingCourses() {
     });
   }
 
+  renderOnlineCoursesBar();
   // Keep AI toolbar lock count in sync
   renderAIToolbar();
   // Conflict check deferred so it always wins over any status messages set by callers
   setTimeout(updateConflictStatus, 0);
+}
+
+function renderOnlineCoursesBar() {
+  const bar = $("onlineCoursesBar");
+  const list = $("onlineCoursesList");
+  const countEl = $("onlineCoursesCount");
+  if (!bar || !list) return;
+  const onlineCourses = workingCourses.filter((c) => c.online || !c.days || !c.days.length);
+  if (!onlineCourses.length) {
+    bar.style.display = "none";
+    return;
+  }
+  bar.style.display = "";
+  if (countEl) countEl.textContent = onlineCourses.length + " course" + (onlineCourses.length !== 1 ? "s" : "");
+  list.innerHTML = "";
+  for (const c of onlineCourses) {
+    const crnKey = String(c.crn ?? "");
+    const isLocked = lockedCrns.has(crnKey);
+    const chipClass = getChipForCourse(c.subject + c.courseNumber);
+    const card = document.createElement("div");
+    card.className = "online-course-card " + chipClass + (isLocked ? " locked" : "");
+    card.setAttribute("data-crn", crnKey);
+    card.innerHTML =
+      '<div class="online-course-main">' +
+        '<div class="online-course-code">' + escapeHtml(c.subject + " " + c.courseNumber) + (isLocked ? ' <span class="online-course-lock">🔒</span>' : "") + "</div>" +
+        '<div class="online-course-title">' + escapeHtml(c.title || "") + "</div>" +
+      "</div>" +
+      (isLocked
+        ? ""
+        : '<button class="online-course-remove" title="Remove" aria-label="Remove ' + escapeHtml(c.subject + " " + c.courseNumber) + '">✕</button>');
+    const removeBtn = card.querySelector(".online-course-remove");
+    if (removeBtn) removeBtn.addEventListener("click", (e) => { e.stopPropagation(); removeFromWorkingSchedule(crnKey); });
+    list.appendChild(card);
+  }
 }
 
 // ============================================================
