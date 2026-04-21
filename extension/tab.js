@@ -1071,7 +1071,9 @@ async function loadSchedule(term) {
     cachedRegisteredTerm = term;
     const { registered, locks } = buildRegisteredCoursesFromEvents(data);
     lockedCrns = locks;
-    workingCourses = [...registered, ...workingCourses.filter((c) => c.source !== "registered")];
+    // Viewing a Banner plan: switch back to registered view and don't merge plan courses in
+    if (activeScheduleKey.startsWith("banner:")) activeScheduleKey = "registered";
+    workingCourses = [...registered, ...workingCourses.filter((c) => c.source !== "registered" && c.source !== "banner")];
 
     // Register modal metadata for registered courses
     const mergedByCrn = groupRegistrationEventsByCrn(data);
@@ -1082,6 +1084,7 @@ async function loadSchedule(term) {
     });
 
     renderCalendarFromWorkingCourses();
+    renderSavedList();
     updateWeekHours(data);
     updateOverviewFromEvents(data);
     const unique = new Set(data.map((e) => e.crn));
@@ -1723,12 +1726,18 @@ function renderSavedList() {
           const crn = String(event.crn || "");
           const existing = acc.find((c) => c.crn === crn);
           const dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri"];
-          const start = new Date(event.start), dayIdx = start.getDay() - 1;
-          const day = dayIdx >= 0 && dayIdx <= 4 ? dayNames[dayIdx] : null;
-          const bh = start.getHours(), bm = start.getMinutes();
-          const end = new Date(event.end), eh = end.getHours(), em = end.getMinutes();
+          let day = null, beginTime = "", endTime = "";
+          if (event.start && event.end) {
+            const start = new Date(event.start), dayIdx = start.getDay() - 1;
+            day = dayIdx >= 0 && dayIdx <= 4 ? dayNames[dayIdx] : null;
+            const bh = start.getHours(), bm = start.getMinutes();
+            const end = new Date(event.end), eh = end.getHours(), em = end.getMinutes();
+            beginTime = String(bh).padStart(2,"0") + ":" + String(bm).padStart(2,"0");
+            endTime = String(eh).padStart(2,"0") + ":" + String(em).padStart(2,"0");
+          }
+          const isOnline = !!(event.online || !event.start);
           if (existing) { if (day && !existing.days.includes(day)) existing.days.push(day); }
-          else acc.push({ crn, subject: event.subject || "", courseNumber: event.courseNumber || "", title: event.title || "", days: day ? [day] : [], beginTime: String(bh).padStart(2,"0") + ":" + String(bm).padStart(2,"0"), endTime: String(eh).padStart(2,"0") + ":" + String(em).padStart(2,"0"), source: "banner", online: false });
+          else acc.push({ crn, subject: event.subject || "", courseNumber: event.courseNumber || "", title: event.title || "", days: day ? [day] : [], beginTime, endTime, source: "banner", online: isOnline });
           return acc;
         }, []);
         if (viewGen !== scheduleViewGeneration) return;
