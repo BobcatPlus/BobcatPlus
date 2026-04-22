@@ -1,10 +1,11 @@
 //combined old Registration.js and DegreeAudit.js
 
-// Phase 1 wiring (2026-04-21): load the RequirementGraph parser modules so
+// Phase 1 wiring: load the RequirementGraph parser modules so
 // `self.BPReq.buildGraphFromAudit` / `deriveEligible` are available inside
 // the MV3 service worker. Each module dual-exports (module.exports for Node
-// tests, `globalThis.BPReq` for this runtime). Behavior remains legacy
-// unless the `bp_phase1_wiring` feature flag is flipped in chrome.storage.
+// tests, `globalThis.BPReq` for this runtime). RequirementGraph is the
+// source of truth for `needed[]` whenever the modules load; legacy
+// `findNeeded` is a fallback for the (rare) module-load failure case.
 try {
   importScripts(
     "requirements/graph.js",
@@ -1087,36 +1088,16 @@ async function getAuditData(studentId, school, degree) {
     // chrome.storage not available in some test contexts; never throw from here
   }
 
-  // Phase 1 wiring — see docs/decisions.md D13.
-  //
-  // Flags (read from chrome.storage.local; default OFF):
-  //   bp_phase1_wiring       — when true, needed[] is produced by the new
-  //                            RequirementGraph parser instead of findNeeded.
-  //   bp_phase1_shadow       — when true, both parsers run and discrepancies
-  //                            are logged + attached to auditDiagnostics.parity.
-  //                            Allowed independently of bp_phase1_wiring so we
-  //                            can watch behavior before flipping.
-  //
-  // If BPReq modules failed to load for any reason, both flags are ignored
-  // and we stay on the legacy path. This guard is the fallback called out in
-  // D13's postmortem failure mode #2.
+  // Phase 1 wiring — see docs/decisions.md D13 (implementation) and D17
+  // (flag removal). RequirementGraph is the authoritative source for
+  // needed[] whenever the BPReq modules loaded successfully. Legacy
+  // findNeeded remains as the fallback for the module-load failure path
+  // called out in D13's postmortem. Parity diagnostics stay attached to
+  // auditDiagnostics so regressions show up in the trace.
   let graph = null;
   let derivedEntries = null;
   let derivedWildcards = null;
   let parity = null;
-  let flags = { wiring: false, shadow: false };
-  try {
-    const stored = await chrome.storage.local.get([
-      "bp_phase1_wiring",
-      "bp_phase1_shadow",
-    ]);
-    flags = {
-      wiring: !!stored.bp_phase1_wiring,
-      shadow: !!stored.bp_phase1_shadow,
-    };
-  } catch (_) {
-    // chrome.storage unavailable (tests) — stay on defaults.
-  }
 
   const bpReqReady =
     typeof self !== "undefined" &&
@@ -1124,42 +1105,33 @@ async function getAuditData(studentId, school, degree) {
     typeof self.BPReq.buildGraphFromAudit === "function" &&
     typeof self.BPReq.deriveEligible === "function";
 
-  if ((flags.wiring || flags.shadow) && bpReqReady) {
+  if (bpReqReady) {
     try {
       graph = self.BPReq.buildGraphFromAudit(audit);
       const derived = self.BPReq.deriveEligible(graph);
       derivedEntries = derived.entries || [];
       derivedWildcards = derived.wildcards || [];
       parity = computeAuditParity(needed, derivedEntries);
-      if (flags.shadow) {
-        console.log("[BP phase1 shadow]", {
-          legacyCount: needed.length,
-          derivedCount: derivedEntries.length,
-          wildcardCount: derivedWildcards.length,
-          onlyInLegacy: parity.onlyInLegacy.length,
-          onlyInDerived: parity.onlyInDerived.length,
-        });
-      }
     } catch (e) {
-      console.warn("[BobcatPlus] Phase 1 parser failed; falling back:", e);
+      console.warn("[BobcatPlus] Phase 1 parser failed; falling back to legacy needed[]:", e);
       graph = null;
       derivedEntries = null;
       derivedWildcards = null;
       parity = { error: e.message || String(e) };
     }
-  } else if (flags.wiring && !bpReqReady) {
+  } else {
     console.warn(
-      "[BobcatPlus] bp_phase1_wiring is ON but BPReq modules are not loaded; " +
-        "falling back to legacy findNeeded. Check that requirements/*.js " +
-        "sit next to background.js and that importScripts succeeded.",
+      "[BobcatPlus] BPReq modules not loaded; using legacy findNeeded. " +
+        "Check that requirements/*.js sit next to background.js and that " +
+        "importScripts succeeded at module load.",
     );
   }
 
-  // When wiring is ON and the derived entries are usable, the new parser
-  // becomes the source of truth for needed[]. The flat shape is identical
-  // enough that downstream code (runAnalysis → searchCourse) works unchanged.
+  // When the derived entries are usable, the new parser is the source of
+  // truth for needed[]. The flat shape is identical enough that downstream
+  // code (runAnalysis → searchCourse) works unchanged.
   let finalNeeded = needed;
-  if (flags.wiring && derivedEntries && derivedEntries.length > 0) {
+  if (derivedEntries && derivedEntries.length > 0) {
     finalNeeded = derivedEntries
       .filter((e) => !e.hideFromUi) // hideFromAdvice fallbacks: surface in graph, not in needed
       .map((e) => ({
@@ -1175,7 +1147,7 @@ async function getAuditData(studentId, school, degree) {
     completed,
     inProgress,
     needed: finalNeeded,
-    auditDiagnostics: { dropped, exceptClauses, parity, phase1Flags: flags },
+    auditDiagnostics: { dropped, exceptClauses, parity },
     graph,
     wildcards: derivedWildcards,
   };
@@ -2140,8 +2112,8 @@ async function runAnalysis(sendUpdate, termCodeOverride, isCurrent, { forceRefre
       cacheTs: oldestCacheTs,
       auditDiagnostics,
       // Phase 1: graph + wildcards flow through but are not yet consumed by
-      // the solver. Populated only when bp_phase1_wiring or bp_phase1_shadow
-      // flag is on; otherwise null so the payload shape stays stable.
+      // the solver. Populated whenever the BPReq modules loaded; null only
+      // when the parse failed.
       graph,
       wildcards,
     },

@@ -179,15 +179,15 @@ cases.push({
 });
 
 cases.push({
-  name: "solveMulti: first schedule honors soft prefs when prefordering flag on (D14)",
+  name: "solveMulti: first schedule honors soft prefs via pref-distance ordering (D14)",
   run() {
     // Regression target: docs/bug1-morning-preference-diagnosis.md.
-    // When `morningCutoffWeight` is below 1.0 (so `hardfloor` cannot prune),
-    // the prefordering flag alone must still surface a preference-honoring
-    // schedule early enough to reach the ranker. In the original
-    // implementation `pref-distance` was the 5th ordering, and the prior
-    // orderings saturated the 2000-schedule pool before it ran. After D14
-    // `pref-distance` runs FIRST with a per-pass budget, so the first
+    // When `morningCutoffWeight` is below 1.0 (so weight-1.0 → hard promotion
+    // can't prune), pref-distance ordering alone must still surface a
+    // preference-honoring schedule early enough to reach the ranker. In the
+    // original implementation `pref-distance` was the 5th ordering, and the
+    // prior orderings saturated the 2000-schedule pool before it ran. After
+    // D14 `pref-distance` runs FIRST with a per-pass budget, so the first
     // schedule in `allResults` must use afternoon sections.
     //
     // Pool: 4 courses × 2 sections each. Morning (0800–1115) vs afternoon
@@ -227,14 +227,14 @@ cases.push({
     ];
     const prefs = synth.defaultPreferences({
       noEarlierThan: "1200",
-      morningCutoffWeight: 0.6, // soft — below hardfloor floor, mimics plain "no" where LLM emits 0.6
+      morningCutoffWeight: 0.6, // soft — mimics plain "no" where LLM emits 0.6
     });
+    // minCredits=9 keeps all 4 courses feasible without credit relaxation.
+    // buildConstraints does NOT auto-promote below-1.0 weights to hard, so
+    // the only mechanic isolating this test is pref-distance ordering.
     const constraints = synth.defaultConstraints({ minCourses: 3, minCredits: 9 });
 
-    const multi = BP.solveMulti(eligible, constraints, prefs, {
-      prefordering: true,
-      hardfloor: false, // explicitly OFF so the only mechanic at play is ordering
-    });
+    const multi = BP.solveMulti(eligible, constraints, prefs);
     assertGreater(multi.results.length, 0, "expected at least one schedule");
 
     const first = multi.results[0];
@@ -259,36 +259,16 @@ cases.push({
 });
 
 cases.push({
-  name: "solveMulti: prefordering flag off does NOT include pref-distance pass",
-  run() {
-    const eligible = synth.morningVsAfternoonEligible();
-    const constraints = synth.defaultConstraints({ minCourses: 3, minCredits: 9 });
-    const multi = BP.solveMulti(
-      eligible,
-      constraints,
-      synth.defaultPreferences(),
-      { prefordering: false, hardfloor: false },
-    );
-    const prefPass = (multi.passContributions || []).find(
-      (p) => p.ordering === "pref-distance",
-    );
-    assertTrue(prefPass == null, "pref-distance pass should not run with flag off");
-  },
-});
-
-cases.push({
   name: "solveMulti: per-pass budget prevents single ordering from monopolizing pool",
   run() {
-    // Regression target: the D14 fix. A single pass (MRV) used to be able to
-    // fill the full SOLVER_RESULT_CAP before the pref-distance pass ran. The
-    // per-pass budget ensures multiple orderings contribute to the pool even
-    // when the pool is deep. We verify by checking that the MRV pass's
-    // newUnique count is bounded below the full cap when prefordering is on
-    // and the eligible set is large enough to trigger saturation in a single
-    // pass.
+    // Regression target: the D14 fix. A single pass (MRV) used to be able
+    // to fill the full SOLVER_RESULT_CAP before the pref-distance pass ran.
+    // The per-pass budget ensures multiple orderings contribute to the pool
+    // even when the pool is deep. We verify by checking the MRV pass's
+    // generated count stays at or under its per-pass cap.
     //
-    // Synth: 8 courses × 2 non-conflicting sections = 2^8 = 256 combos, well
-    // under the full cap. We instead check the per-pass cap is respected.
+    // Synth: 8 courses × 2 non-conflicting sections = 2^8 = 256 combos,
+    // well under the full cap. We check that the per-pass cap is respected.
     const eligible = [];
     for (let i = 0; i < 8; i++) {
       eligible.push(
@@ -316,7 +296,6 @@ cases.push({
       eligible,
       constraints,
       synth.defaultPreferences({ noEarlierThan: "1200", morningCutoffWeight: 0.6 }),
-      { prefordering: true, hardfloor: false },
     );
     const mrvPass = (multi.passContributions || []).find((p) => p.ordering === "mrv");
     assertTrue(mrvPass != null, "mrv pass should run");

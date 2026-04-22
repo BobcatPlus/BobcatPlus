@@ -8,10 +8,10 @@
 // no network, no chrome.* API usage, fully unit-testable against the
 // `tests/fixtures/wildcard/cs-4@.json` fixture.
 //
-// The actual HTTP fetcher lives in `background.js` and is gated on a
-// separate feature flag (`bp_phase1_wildcards`) that defaults OFF until
-// we capture the exact endpoint URL + params from a live DevTools trace.
-// See `docs/decisions.md` D13 for the split rationale.
+// The actual HTTP fetcher lives in `background.js` and is still pending
+// Layer B (step 4 in the HANDOFF Next-action list): we need to capture
+// the exact endpoint URL + params from a live DevTools trace before
+// wiring it up. See `docs/decisions.md` D13 for the split rationale.
 //
 // Dual-export: usable both in the extension runtime (attaches to
 // `globalThis.BPReq`) and in Node unit tests (`module.exports`).

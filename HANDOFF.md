@@ -119,9 +119,9 @@ One function — `BP.handleUserTurn({ userMessage, rawData, studentProfile, ... 
 | `extension/tab.html` / `tab.css` | Shell + styles. |
 | `extension/background.js` | Scrapes Banner + DegreeWorks. **Don't touch** unless fixing scrape bugs. |
 | `extension/requirements/graph.js` | Phase-1 RequirementGraph primitives — node kinds, factories, traversal, invariants. Pure data, no DegreeWorks knowledge. |
-| `extension/requirements/txstFromAudit.js` | Phase-1 TXST adapter. Turns raw DegreeWorks audit JSON into a `RequirementGraph` + a `deriveEligible()` compat view that mimics the legacy `needed[]` shape. Wired into `background.js` behind `bp_phase1_wiring` as of 2026-04-21. |
+| `extension/requirements/txstFromAudit.js` | Phase-1 TXST adapter. Turns raw DegreeWorks audit JSON into a `RequirementGraph` + a `deriveEligible()` compat view that mimics the legacy `needed[]` shape. Source of truth for `needed[]` in `background.js` as of the D17 flag-removal (legacy `findNeeded` is fallback only). |
 | `extension/requirements/wildcardExpansion.js` | Pure normalizer + cache-key helpers for DW `courseInformation` responses. Fed by the yet-to-be-wired Layer-B HTTP fetcher (see D13). Tested against `tests/fixtures/wildcard/cs-4@.json`. |
-| `scripts/generate-phase1-baseline.js` | Regenerates `docs/baselines/phase1-*.json` from the fixture audits. Run before flipping `bp_phase1_wiring` on for real users; the snapshot is the regression baseline every later phase must not beat. |
+| `scripts/generate-phase1-baseline.js` | Regenerates `docs/baselines/phase1-*.json` from the fixture audits. The snapshot is the regression baseline every later phase must not beat; rerun whenever the parser or adapter changes. |
 | `tests/intent-fixture.js` | Node runner. Property-test assertions (not exact match) against 11 canonical student prompts. Needs the LLM. `OPENAI_API_KEY=... node tests/intent-fixture.js`. |
 | `tests/unit/*.test.js` | Deterministic unit tests (no OpenAI). Cover `solve`, `scoreSchedule`, `applyVector`, `pickTop3`, `rankSchedules`, the Phase-0 metric helpers, and the Phase-1 audit adapter. Run with `node tests/unit/run.js`. |
 | `tests/fixtures/audits/` | Real TXST audit JSONs (English BA, CS BS + Music minor). Replay material for the adapter tests. |
@@ -193,26 +193,26 @@ trace. Top-3 no longer contains CS 4371 CRN 12118 (9:30 AM). See
 
 **What landed:**
 
-1. **`bp_phase2_solver_prefordering`** — `pref-distance` ordering runs
-   FIRST in `solveMulti` when the flag is on, so the initial schedules
-   the solver generates honor the active soft prefs. Earlier (5th-pass)
-   wiring was neutralized in production because MRV / reverse-MRV /
-   shuffled passes saturated the 2000-schedule cap first. Each pass
-   now also gets a per-pass budget (`SOLVER_RESULT_CAP / passes`) so no
-   single ordering can monopolize the pool; last pass claims the
-   remainder.
-2. **`bp_phase2_solver_hardfloor`** — when `calibrateIntentWeights`
-   floors a weight at 1.0, `buildConstraints` promotes the matching
-   pref to a solver hard constraint (`hardNoEarlierThan`,
-   `hardNoLaterThan`, `hardDropOnline`). The calibrator itself was
-   the gap: `HARD_PATTERN` alone missed declarative "no classes before
-   noon", so `morningCutoffWeight` stayed at 0.6 and hardfloor never
-   fired. A new `DECLARATIVE_NO_PATTERN` now rescues bare "no X"
-   phrasing. Also unblocks the `preferInPerson` scoring invariant —
+1. **Pref-distance ordering first in `solveMulti`.** The `pref-distance`
+   ordering runs first, so the initial schedules the solver generates
+   honor the active soft prefs. Earlier (5th-pass) wiring was
+   neutralized in production because MRV / reverse-MRV / shuffled
+   passes saturated the 2000-schedule cap first. Each pass now also
+   gets a per-pass budget (`SOLVER_RESULT_CAP / passes`) so no single
+   ordering can monopolize the pool; last pass claims the remainder.
+2. **Weight-1.0 → solver hard constraint in `buildConstraints`.** When
+   `calibrateIntentWeights` floors a weight at 1.0, the matching pref
+   becomes a hard constraint (`hardNoEarlierThan`, `hardNoLaterThan`,
+   `hardDropOnline`). The calibrator itself was the gap: `HARD_PATTERN`
+   alone missed declarative "no classes before noon", so
+   `morningCutoffWeight` stayed at 0.6 and the promotion never fired.
+   A new `DECLARATIVE_NO_PATTERN` now rescues bare "no X" phrasing.
+   Also unblocks the `preferInPerson` scoring invariant —
    `breakdownOf` inverts `onlineTerm` when `preferInPerson` is true.
 
-Both flags are currently default-on. **D17 (flag removal) is queued**
-— rollback becomes `git revert 5975c90` once the flags are stripped.
+Both mechanics run unconditionally; feature flags were removed in D17.
+Rollback is `git revert` on either the Bug 1/3 fix commit (`5975c90`)
+or the flag-removal commit.
 
 **Separate concern (still open, tracked in the diagnosis doc):** when
 `morningCutoffWeight > 0` but `noEarlierThan` is null (fuzzy "don't like
@@ -361,9 +361,9 @@ after Phase 2 / before Max's refactor.
 | Phase | Goal | Status |
 |---|---|---|
 | 0 | Instrument the pipeline — metrics, trace payloads, unit harness | ✅ done |
-| 1 | RequirementGraph parser, TXST adapter, compat layer | ✅ wired 2026-04-21 behind `bp_phase1_wiring` (default OFF) + `bp_phase1_shadow` (parity logging). Live `courseInformation` fetcher split to follow-up (see D13). 76 unit tests green. |
+| 1 | RequirementGraph parser, TXST adapter, compat layer | ✅ wired 2026-04-21; feature flags removed in D17 — RequirementGraph is now the authoritative source for `needed[]` whenever the BPReq modules load (legacy `findNeeded` is fallback only). Live `courseInformation` fetcher (Layer B) still split to follow-up (see D13). |
 | 1.5 | Solver consumes the graph natively (ChooseN / AllOf / exclusivity / multi-count satisfaction table) | ⬜ not started |
-| 2-precursor | **Bug 1/3 solver fix.** `bp_phase2_solver_prefordering` (`pref-distance` ordering first in `solveMulti` + per-pass budget) + `bp_phase2_solver_hardfloor` (calibrator `DECLARATIVE_NO_PATTERN` + `buildConstraints` promotes weight-1.0 → hard). | ✅ shipped 2026-04-21 PM in `5975c90`, verified live on "no classes before noon, no classes friday". Flag removal queued as D17. |
+| 2-precursor | **Bug 1/3 solver fix.** `pref-distance` ordering first in `solveMulti` + per-pass budget; calibrator `DECLARATIVE_NO_PATTERN`; `buildConstraints` promotes weight-1.0 → hard constraint. | ✅ shipped 2026-04-21 PM in `5975c90`, verified live on "no classes before noon, no classes friday". Feature flags removed in D17. |
 | 2 | Scorer fidelity — fuzzy time prefs (weight>0 without `noEarlierThan`), silent-prefs floor | ⬜ not started. `preferInPerson` scoring term shipped with the 2-precursor commit; remaining scope is the fuzzy/silent cases. |
 | 2.5 | **Prereq awareness within a term.** Solver refuses to propose Calc 2 if Calc 1 is not completed or in-progress. Data source: DW `courseInformation.prerequisites[]`. | ⬜ not started (new phase, see `docs/decisions.md` D8) |
 | 3 | Archetype-seeded ranking (spread / compressed / time-blocked) | ⬜ not started |
@@ -385,10 +385,11 @@ Each step is sized to be one chat (fresh session, reads this file + the
 referenced doc, ships the change, updates decisions.md).
 
 0. ~~**Bug 5 quick fix.**~~ ✅ Landed 2026-04-21 AM.
-1. ~~**Phase 1 wiring.**~~ ✅ Landed 2026-04-21 PM. Shadow-mode parity run
-   on CS BS audit matched the baseline exactly (`legacyCount: 34,
-   derivedCount: 29, onlyInLegacy: 8, onlyInDerived: 3, wildcardCount:
-   14`). Flipping `bp_phase1_wiring` ON is safe.
+1. ~~**Phase 1 wiring.**~~ ✅ Landed 2026-04-21 PM; default-on after D17.
+   Shadow-mode parity run on CS BS audit matched the baseline exactly
+   (`legacyCount: 34, derivedCount: 29, onlyInLegacy: 8, onlyInDerived:
+   3, wildcardCount: 14`). RequirementGraph is now the authoritative
+   source for `needed[]`.
 2. ~~**Bug 1 diagnosis.**~~ ✅ Landed 2026-04-21 PM. Real trace captured,
    root cause identified as solver enumeration bias (see
    `docs/bug1-morning-preference-diagnosis.md` and D14).
@@ -397,21 +398,26 @@ referenced doc, ships the change, updates decisions.md).
    calibrator `DECLARATIVE_NO_PATTERN` rescues bare "no X" so hardfloor
    actually fires; `preferInPerson` `expectedToFail` flipped. Verified
    live. See D14 for the landing summary.
-3a. **Flag removal (D17, queued).** Strip `bp_phase1_*` + `bp_phase2_*`
-    feature flags from the codebase now that Bug 1/3 is proven. Collapse
-    default-true code paths; rollback becomes commit revert only.
+3a. ~~**Flag removal (D17).**~~ ✅ Landed alongside the docs close-out.
+    All `bp_phase1_*` and `bp_phase2_*` feature flags stripped; default
+    paths are now unconditional. Rollback is `git revert` on either the
+    Bug 1/3 fix or the flag-removal commit.
 4. **Capture the `courseInformation` URL → Layer B.** Open DevTools on the
    DW audit page, click a wildcard (e.g. CS 4@), copy the XHR URL. Paste
    it into a new decisions-log entry, then wire
-   `expandWildcardViaCourseInformation` in `background.js` behind
-   `bp_phase1_wildcards`. Normalizer is already in
-   `extension/requirements/wildcardExpansion.js` — only the fetch +
-   1-hour cache + call site are needed. Very short chat.
+   `expandWildcardViaCourseInformation` in `background.js`. Normalizer
+   is already in `extension/requirements/wildcardExpansion.js` — only
+   the fetch + 1-hour cache + call site are needed. Very short chat.
+   (Per D17, no new feature flag unless the ship-to-verify window
+   actually needs one; commit-scoped rollback is the default.)
 5. **Bug 6 import-button UX.** Separate chat, cheap to fix (probably a
    single `runAnalysis` call on popup open + auth-expired detection).
    Fine to do with Auto mode instead of Opus/API.
 6. **Phase 1.5 solver.** Start the graph-aware solver only after steps
-   3–5 have landed and shadow mode has been clean on ≥3 audits.
+   3–5 have landed. The `auditDiagnostics.parity` summary in the
+   background-fetch payload is the ongoing regression canary now that
+   shadow-mode logging is gone — spot-check it on ≥3 real audits
+   before flipping the switch on the graph-aware solver.
 
 ---
 
@@ -538,9 +544,14 @@ rest were ceremony. If you skip one, say so in the PR description.
    modes and their mitigations. For LLM prompt changes specifically, one of
    the bullets must answer "could this rule live in deterministic JS
    instead?" — prompts are for ambiguity, not invariants.
-2. **Feature flag per phase.** Use `chrome.storage.local` keys like
-   `bp_phase1_wiring`, `bp_phase2_solver_prefordering`. Rollback is a toggle,
-   never a revert. No flag, no merge.
+2. **Commit-scoped rollback (revised D17).** Every phase commit must be
+   self-contained enough that `git revert <sha>` cleanly restores the
+   prior behavior. Feature flags in `chrome.storage.local` are optional
+   — use them when a phase needs to ship in shadow before going live, or
+   when a refactor spans multiple commits and you need bisection — but
+   don't leave flag plumbing around once the change is verified. The
+   flags that did exist (`bp_phase1_wiring`, `bp_phase2_solver_*`) were
+   stripped in D17 once their phases landed.
 3. **Metric baseline before merge.** Snapshot the offline-measurable Phase-0
    metrics on fixture prompts into `docs/baselines/phaseN-{date}.json`. The
    next phase cannot merge if any regresses without written justification.

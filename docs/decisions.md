@@ -12,6 +12,100 @@ wins and the RFC must be updated.
 
 ---
 
+## 2026-04-21 PM — D17: Strip `bp_phase1_*` + `bp_phase2_*` feature flags; commit revert is the rollback
+
+**Context.** The scheduler grew five `chrome.storage.local` feature flags
+across two phases (`bp_phase1_wiring`, `bp_phase1_shadow`,
+`bp_phase1_wildcards`, `bp_phase2_solver_prefordering`,
+`bp_phase2_solver_hardfloor`). Each was added to support D10/D15's
+"feature flag per phase" gate — the idea being that rollback should be a
+toggle in storage, never a revert. That gate made sense when we didn't
+trust a phase enough to default it on. Both phases that actually
+shipped are now live-verified:
+
+- Phase 1 (`bp_phase1_wiring`) — shadow-mode parity run on CS BS audit
+  matched the baseline exactly (D13); HANDOFF said "flipping
+  `bp_phase1_wiring` ON is safe" on the day it shipped.
+- Phase 2 precursor (`bp_phase2_solver_*`) — verified live against the
+  same "no classes before noon, no classes friday" prompt that produced
+  the original Bug 1 trace (D14 status update).
+
+Aidan's call: keep the flags only while they're earning their keep. With
+both phases green, the flag plumbing is pure cognitive overhead — every
+fresh AI session has to re-explain what each flag gates, test harnesses
+have to pass default-on objects through three function layers, and the
+`chrome.storage` round-trip in the hot path is wasted work.
+
+**Decision.** Remove all `bp_phase1_*` and `bp_phase2_*` flags from the
+codebase. Collapse each gated branch to its default-on behavior. The
+one remaining guard is the legacy-fallback path in `background.js`
+(used only when `importScripts` fails to load the `BPReq` modules);
+that's a runtime safety net, not a user-toggleable flag.
+
+Concretely:
+
+- `extension/scheduleGenerator.js`: delete `PHASE2_SOLVER_FLAG_KEYS` +
+  `getPhase2SolverFlags`; drop the `phase2Flags` param from
+  `buildConstraints` / `solveMulti` / `solveWithRelaxation`;
+  `pref-distance` ordering and hardfloor promotion are now
+  unconditional.
+- `extension/background.js`: stop reading `bp_phase1_wiring` /
+  `bp_phase1_shadow`. RequirementGraph is the authoritative source for
+  `needed[]` whenever the BPReq modules loaded successfully; legacy
+  `findNeeded` is the fallback for the module-load-failure path only.
+  Drop `auditDiagnostics.phase1Flags` (no downstream consumers).
+- Tests updated to match the simplified signatures; the "flag OFF" unit
+  cases were deleted (not rewritten, since a flag-OFF path no longer
+  exists) and one was replaced with a weight-gate equivalent
+  ("hedged phrasing → no hard constraint").
+- Comments in `wildcardExpansion.js` and `generate-phase1-baseline.js`
+  scrubbed of stale flag references.
+
+**Rationale.** Flags aren't free. Every one is a public API surface
+contract with the chrome.storage schema, a code-review tax, and a new
+onboarding sentence in HANDOFF. They pay for themselves during the
+uncertain window between "shipped" and "trusted"; after that window
+they're overhead. D17 enshrines the lifecycle: **add flag → ship behind
+it → verify live → strip the flag → commit-revert is the rollback.**
+This supersedes the "rollback is a toggle, never a revert" line from
+D15's Process gate #2 — that line got rewritten to reflect the new
+shape ("commit-scoped rollback", flags optional during the ship-to-
+verify window).
+
+We retain the option of adding a new flag for a future phase if the
+risk calculus warrants it — D17 doesn't forbid flags, it just stops
+treating them as mandatory infrastructure and requires they get
+removed once the feature has stabilized.
+
+**Postmortem-in-advance.** *Six months from now, we rolled this back.
+What happened?*
+
+1. **Failure mode:** A regression slips in on a prompt shape we didn't
+   test (e.g., "absolutely no Wednesdays, preferably no mornings") and
+   the old flag-off escape hatch would've let us bisect "flag plumbing"
+   vs "solver logic" in seconds. With flags removed, we have to bisect
+   the whole commit.
+   **Mitigation:** The commits are scoped (one for Fix A+B together,
+   one for flag removal), so `git bisect` against the Bug 1/3 regression
+   set still walks exactly two commits. The 98→97 unit-test harness
+   covers declarative-no + hedged + negative cases; adding a new prompt
+   shape to the harness costs one test, not a flag.
+2. **Failure mode:** Live `chrome.storage.local` values set by beta
+   testers before D17 are now silently ignored; if a tester flipped a
+   flag OFF to work around a bug, their "fix" now stops working without
+   any surface signal. **Mitigation:** Aidan is the only user of the
+   extension today; there is no beta cohort. If one appears later,
+   D17 itself (this entry) is the record to consult first when
+   debugging "my flag stopped working".
+
+**Reversible by.** `git revert` on the D17 commit, followed by
+revisiting D15's Process gate #2. The decision is cheap to undo for
+any one phase (re-add a flag to gate its new behavior), but D17's
+guidance — "flags get stripped once verified" — stays in force even
+if a single flag gets reintroduced elsewhere.
+
+---
+
 ## 2026-04-21 PM — D16: Codify model-and-chat-routing rules for every AI session
 
 **Context.** API budget is finite (~$20/month of included quota) and
@@ -138,10 +232,8 @@ Landed changes:
   cases (positive, negative, hedged, flag-off gating) + 3 solver ordering
   / budget cases. 98/98 green.
 
-**Reversible by.** Flipping `bp_phase2_solver_prefordering` and/or
-`bp_phase2_solver_hardfloor` to `false` in `chrome.storage.local`
-disables each layer independently — but only until the D17 flag-removal
-commit lands. After that, rollback is `git revert 5975c90`.
+**Reversible by.** `git revert 5975c90` now that D17 has stripped the
+`bp_phase2_solver_prefordering` / `bp_phase2_solver_hardfloor` flags.
 
 ---
 

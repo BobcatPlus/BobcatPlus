@@ -1,7 +1,24 @@
 # Bug 1 — "Schedule picks 9:30 AM class when noon+ alternative exists"
 
-**Status:** diagnosed 2026-04-21 from a real trace; fix deferred to
-Phase-2 precursor. See `docs/decisions.md` D14 for the decision record.
+**Status:** ✅ **Closed.** Shipped 2026-04-21 PM in commit `5975c90`
+(calibrator `DECLARATIVE_NO_PATTERN` + `pref-distance` ordering first in
+`solveMulti` + weight-1.0 → hard-constraint promotion in
+`buildConstraints` + `preferInPerson` scorer inversion). Verified live
+on the same "no classes before noon, no classes Friday" prompt that
+produced the original trace below. Feature flags
+`bp_phase2_solver_prefordering` / `bp_phase2_solver_hardfloor` were
+removed in the D17 follow-up (rollback is now `git revert`).
+
+This document is kept as the **historical record** of the failure mode
+and the diagnosis — the body below reflects what we knew on 2026-04-21
+PM before the fix landed. See `docs/decisions.md` D14 for the landing
+summary and D17 for the flag-removal rationale.
+
+---
+
+**Status (at time of writing, 2026-04-21):** diagnosed from a real
+trace; fix deferred to Phase-2 precursor. See `docs/decisions.md` D14
+for the decision record.
 
 ## Reproduction
 

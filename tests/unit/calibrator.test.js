@@ -3,10 +3,12 @@
 // Regression target: docs/bug1-morning-preference-diagnosis.md (Bug 1).
 // The original 79-test suite tested `hardNoEarlierThan` at the solver leaf but
 // never threaded a declarative user message through the full intent →
-// calibrator → buildConstraints chain. That gap let the `bp_phase2_solver_
-// hardfloor` flag look fine in tests while silently never firing in prod
-// because the calibrator didn't floor `morningCutoffWeight` at 1.0 for plain
-// "no classes before noon" phrasing.
+// calibrator → buildConstraints chain. That gap let the weight-1.0 → hard-
+// constraint promotion look fine in tests while silently never firing in
+// prod because the calibrator didn't floor `morningCutoffWeight` at 1.0 for
+// plain "no classes before noon" phrasing (LLM returned 0.6, HARD_PATTERN
+// didn't rescue it). Fix landed in commit 5975c90; flags removed in the
+// D17 follow-up.
 //
 // These cases assert the whole chain, plus negative cases so a future broader
 // HARD match doesn't regress false-positive behavior.
@@ -30,13 +32,12 @@ function runCalibrate(msg, prefs) {
   return intent.statedPreferences;
 }
 
-function runChain(msg, prefs, profileExtra = {}, flags = { prefordering: true, hardfloor: true }) {
+function runChain(msg, prefs, profileExtra = {}) {
   const out = runCalibrate(msg, prefs);
   const constraints = BP.buildConstraints(
     out,
     { calendarBlocks: [], avoidDays: [], ...profileExtra },
     [],
-    flags,
   );
   return { prefs: out, constraints };
 }
@@ -233,19 +234,23 @@ cases.push({
 });
 
 cases.push({
-  name: "chain: hardfloor flag OFF leaves constraints.hardNoEarlierThan undefined",
+  name: "chain: hedged phrasing leaves constraints.hardNoEarlierThan undefined",
   run() {
-    // Safety check — the flag gate must still work once the calibrator floors.
+    // Weight-gate safety — the promotion only fires when the calibrator
+    // floors at 1.0. A hedge-only message with no declarative-no clause
+    // must stay soft, so no hard constraint is set. This is the test that
+    // would catch a future over-broadening of DECLARATIVE_NO_PATTERN.
     const { prefs, constraints } = runChain(
-      "no classes before noon",
-      { noEarlierThan: "1200", morningCutoffWeight: 0.6 },
-      {},
-      { prefordering: true, hardfloor: false },
+      "would prefer to avoid early mornings if possible",
+      { noEarlierThan: "1000", morningCutoffWeight: 0.8 },
     );
-    assertEqual(prefs.morningCutoffWeight, 1.0, "calibrator still floors regardless of flag");
+    assertTrue(
+      prefs.morningCutoffWeight < 1.0,
+      `hedge should cap weight below 1.0, got ${prefs.morningCutoffWeight}`,
+    );
     assertTrue(
       constraints.hardNoEarlierThan === undefined,
-      `hardfloor flag off → no hard constraint, got ${constraints.hardNoEarlierThan}`,
+      `weight < 1.0 → no hard constraint, got ${constraints.hardNoEarlierThan}`,
     );
   },
 });

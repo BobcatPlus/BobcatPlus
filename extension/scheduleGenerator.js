@@ -513,7 +513,8 @@ Existing avoid days: ${JSON.stringify(studentProfile.avoidDays)}${ragSection}
   // Declarative-no: plain "no X" where X is a scheduling noun the student only
   // uses when stating a rule. Live-trace evidence (docs/bug1-morning-preference-
   // diagnosis.md) showed the intent LLM returns 0.6 for "no classes before noon"
-  // and HARD_PATTERN didn't rescue it, so hardfloor never fired in production.
+  // and HARD_PATTERN didn't rescue it, so the weight-1.0 → hard-constraint
+  // promotion in buildConstraints never fired in production.
   // Scoped narrowly to avoid false positives like "no problem", "no clue",
   // "no preference", "no strong feelings about mornings".
   const DECLARATIVE_NO_PATTERN = /\bno\s+(?:class(?:es)?|morning|mornings|afternoon|afternoons|evening|evenings|night|nights|early|late|online|remote|in[- ]?person|on[- ]?campus|(?:mon|tues?|wed(?:nes)?|thur?s?|fri)(?:day)?s?)\b/;
@@ -705,36 +706,6 @@ ${JSON.stringify(compressed, null, 2)}
 
   const SOLVER_NODE_CAP = 200000;
   const SOLVER_RESULT_CAP = 2000;
-
-  // Phase-2 precursor (D14): gated via chrome.storage.local; default ON when
-  // storage is unavailable (Node unit tests). Explicit `false` disables.
-  const PHASE2_SOLVER_FLAG_KEYS = [
-    "bp_phase2_solver_prefordering",
-    "bp_phase2_solver_hardfloor",
-  ];
-
-  async function getPhase2SolverFlags() {
-    const defaults = { prefordering: true, hardfloor: true };
-    if (typeof chrome === "undefined" || !chrome.storage?.local?.get) {
-      return defaults;
-    }
-    return new Promise((resolve) => {
-      try {
-        chrome.storage.local.get(PHASE2_SOLVER_FLAG_KEYS, (obj) => {
-          if (chrome.runtime?.lastError) {
-            resolve(defaults);
-            return;
-          }
-          resolve({
-            prefordering: obj.bp_phase2_solver_prefordering !== false,
-            hardfloor: obj.bp_phase2_solver_hardfloor !== false,
-          });
-        });
-      } catch (_e) {
-        resolve(defaults);
-      }
-    });
-  }
 
   // Preference-distance for section ordering (pref-biased solve pass). Mirrors
   // docs/bug1-morning-preference-diagnosis.md — lower is better.
@@ -1313,8 +1284,7 @@ ${JSON.stringify(compressed, null, 2)}
   // Each step records what was relaxed so we can tell the student.
   // ============================================================
 
-  function buildConstraints(preferences, studentProfile, lockedCourses, phase2Flags) {
-    const flags = phase2Flags || { prefordering: true, hardfloor: true };
+  function buildConstraints(preferences, studentProfile, lockedCourses) {
     const hardAvoidDays = (studentProfile.avoidDays || []).filter(() =>
       (preferences.avoidDayWeight ?? 0.5) >= 1.0
     );
@@ -1329,16 +1299,17 @@ ${JSON.stringify(compressed, null, 2)}
       minCourses: 3,
       maxCourses: 6,
     };
-    if (flags.hardfloor) {
-      if ((preferences.morningCutoffWeight ?? 0) >= 1.0 && preferences.noEarlierThan) {
-        base.hardNoEarlierThan = preferences.noEarlierThan;
-      }
-      if ((preferences.lateCutoffWeight ?? 0) >= 1.0 && preferences.noLaterThan) {
-        base.hardNoLaterThan = preferences.noLaterThan;
-      }
-      if ((preferences.onlineWeight ?? 0) >= 1.0 && preferences.preferInPerson) {
-        base.hardDropOnline = true;
-      }
+    // Weight-1.0 soft prefs → solver hard constraints (D14). The calibrator
+    // floors a weight at 1.0 only when the student's phrasing is firm; below
+    // 1.0 the pref stays soft and only influences the scorer.
+    if ((preferences.morningCutoffWeight ?? 0) >= 1.0 && preferences.noEarlierThan) {
+      base.hardNoEarlierThan = preferences.noEarlierThan;
+    }
+    if ((preferences.lateCutoffWeight ?? 0) >= 1.0 && preferences.noLaterThan) {
+      base.hardNoLaterThan = preferences.noLaterThan;
+    }
+    if ((preferences.onlineWeight ?? 0) >= 1.0 && preferences.preferInPerson) {
+      base.hardDropOnline = true;
     }
     return base;
   }
@@ -1362,26 +1333,22 @@ ${JSON.stringify(compressed, null, 2)}
   // fixates on small-branching courses and yields near-identical schedules.
   //
   // Ordering choices (D14):
-  //   - pref-distance RUNS FIRST when the prefordering flag is on, so the
-  //     initial schedules in the pool honor the student's soft prefs even
-  //     without a hardfloor. Live trace in docs/bug1-morning-preference-
-  //     diagnosis.md showed MRV-first filled the 2000-schedule cap along a
-  //     branch that never reached the 12:30 PM alternative to CS 4371.
+  //   - pref-distance RUNS FIRST, so the initial schedules in the pool honor
+  //     the student's soft prefs even when no pref is hard-floored. Live
+  //     trace in docs/bug1-morning-preference-diagnosis.md showed MRV-first
+  //     filled the 2000-schedule cap along a branch that never reached the
+  //     12:30 PM alternative to CS 4371.
   //   - Each pass gets a per-pass budget (SOLVER_RESULT_CAP / passes) so no
   //     single ordering can monopolize the pool; later orderings still
   //     contribute diversity after pref-distance has seeded the front.
-  function solveMulti(eligible, constraints, preferences, phase2Flags) {
-    const flags = phase2Flags || { prefordering: true, hardfloor: true };
-    const orderings = [];
-    if (flags.prefordering) {
-      orderings.push({ ordering: "pref-distance" });
-    }
-    orderings.push(
+  function solveMulti(eligible, constraints, preferences) {
+    const orderings = [
+      { ordering: "pref-distance" },
       { ordering: "mrv" },
       { ordering: "reverse-mrv" },
       { ordering: "shuffled", seed: 17 },
       { ordering: "shuffled", seed: 101 },
-    );
+    ];
     // Budget each pass; final pass can take whatever remains so the overall
     // cap is fully utilized even when some orderings exhaust early.
     const baseBudget = Math.max(1, Math.ceil(SOLVER_RESULT_CAP / orderings.length));
@@ -1439,15 +1406,14 @@ ${JSON.stringify(compressed, null, 2)}
     };
   }
 
-  function solveWithRelaxation(eligible, preferences, studentProfile, lockedCourses, trace, phase2Flags) {
-    const flags = phase2Flags || { prefordering: true, hardfloor: true };
+  function solveWithRelaxation(eligible, preferences, studentProfile, lockedCourses, trace) {
     const relaxations = [];
     const attempts = [];
     let workingPrefs = { ...preferences };
-    let constraints = buildConstraints(workingPrefs, studentProfile, lockedCourses, flags);
+    let constraints = buildConstraints(workingPrefs, studentProfile, lockedCourses);
 
     const t = trace.start("solver", "Searching feasible schedules…");
-    let solved = solveMulti(eligible, constraints, workingPrefs, flags);
+    let solved = solveMulti(eligible, constraints, workingPrefs);
     attempts.push({
       label: "initial",
       constraints: _constraintSnapshot(constraints, workingPrefs),
@@ -1494,8 +1460,8 @@ ${JSON.stringify(compressed, null, 2)}
       if (!step.condition()) continue;
       step.apply();
       relaxations.push(step.label);
-      constraints = buildConstraints(workingPrefs, studentProfile, lockedCourses, flags);
-      solved = solveMulti(eligible, constraints, workingPrefs, flags);
+      constraints = buildConstraints(workingPrefs, studentProfile, lockedCourses);
+      solved = solveMulti(eligible, constraints, workingPrefs);
       attempts.push({
         label: step.label,
         constraints: _constraintSnapshot(constraints, workingPrefs),
@@ -1960,7 +1926,6 @@ ${profile}${rag}
       });
 
       // Stage 3: Solver with graceful relaxation
-      const phase2SolverFlags = await getPhase2SolverFlags();
       const softAvoidDays = (updatedProfile.avoidDays || []).filter(() =>
         (prefs.avoidDayWeight ?? 0.5) < 1.0
       );
@@ -1971,7 +1936,6 @@ ${profile}${rag}
         updatedProfile,
         lockedCourses,
         trace,
-        phase2SolverFlags,
       );
 
       if (!solved.results.length) {
@@ -2102,7 +2066,6 @@ ${profile}${rag}
     solve,
     solveMulti,
     solveWithRelaxation,
-    getPhase2SolverFlags,
     buildConstraints,
     pickTop3,
     rankSchedules,

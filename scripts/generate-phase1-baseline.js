@@ -7,9 +7,9 @@
 // Emits a deterministic JSON snapshot of every offline-measurable metric
 // that Phase 1 touches: parser output counts, wildcard counts, graph
 // validity, and wildcard-normalizer counts against the cs-4@ fixture.
-// Run this before flipping `bp_phase1_wiring` on for real users; a Phase 2
-// baseline will extend this with runtime metrics (honoredRate etc.) that
-// need an LLM.
+// The resulting baseline is the regression floor every later phase must
+// not beat. A Phase 2 baseline will extend this with runtime metrics
+// (honoredRate etc.) that need an LLM.
 
 const fs = require("fs");
 const path = require("path");
