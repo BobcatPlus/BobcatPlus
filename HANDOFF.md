@@ -144,7 +144,7 @@ Closed bugs (historical record only): `docs/bug1-morning-preference-diagnosis.md
 | 4b          | Advisor brief synthesis + RAG for catalog prose                                                                                                                                         | ⬜ not started                                                                                                                                                                                                     |
 | 5           | **Multi-semester path planner.** "Calc 1 must start now or you can't graduate on time."                                                                                                 | ⬜ not started. Needs seasonality data (open). See D8.                                                                                                                                                             |
 | X           | Bug 4 — eligible-course fix rollup (Layers A/B/C)                                                                                                                                       | 🟡 Layers A + B + C shipped; **pending live verification** (reload extension, confirm ≥50 eligible on CS BS / English-CW audits). Attribute wildcards (Layer D) and many-to-many rule mapping (Layer E) deferred. |
-| Y           | **A1+B perf fix + cache-poisoning fix (uncommitted as of 2026-04-21 PM).** Bounded concurrency pool + fetch-with-timeout; batch subject search; `subjectSearch|v2|` cache-version bump. | 🟡 Implemented, unit-tested, not yet committed/PR'd. Verified live by Aidan: eligible list now fills in <3s; prereq phase ticks visibly instead of hanging.                                                       |
+| Y           | **A1+B perf fix + cache-poisoning fix** (`e687ad6`). Bounded concurrency pool + fetch-with-timeout; batch subject search; `subjectSearch|v2|` cache-version bump. | ✅ Shipped on `LLM-algorithm`. Verified live by Aidan: eligible list fills in <3s; prereq phase ticks visibly instead of hanging. **Open PR to `main`.** |
 
 
 ### Delta vs legacy `findNeeded`, measured on fixture audits
@@ -168,11 +168,10 @@ diagnosis doc.
 1. ✅ Bug 5, Phase 1 wiring, Bug 1 diagnosis, Bug 1/3 solver fix,
   D17 flag removal, Layer B/C wildcard expansion. See commit history
    and closed-bug docs.
-2. ✅ **A1+B perf fix + cache-poisoning fix** (uncommitted as of
-  2026-04-21 PM): `performance/concurrencyPool.js` +
+2. ✅ **A1+B perf fix + cache-poisoning fix** (`e687ad6`): `performance/concurrencyPool.js` +
    `searchCoursesBySubjects` + `subjectSearch|v2|…` cache versioning.
    Eligible list fills in <3s; prereq phase shows progress instead of
-   hanging. Verified live by Aidan. **Needs PR.**
+   hanging. Verified live by Aidan. **Needs PR to `main`.**
 3. **Open the PR** (Auto mode, fresh chat). Branch `LLM-algorithm` →
   `main`. Covers Bug 4 Layers A/B/C + A1+B perf + cache-poisoning
    fix + documentation cleanup.
@@ -191,10 +190,9 @@ diagnosis doc.
 
 ## Recent commit history (branch: `LLM-algorithm`)
 
-- *(uncommitted as of 2026-04-21 PM)* — A1+B perf fix +
- `subjectSearch|v2|` cache versioning + `performance/concurrencyPool.js`
-  - `docs/bug5-`*, `docs/bug6-*`, `docs/README.md`,
-  `docs/CONTRIBUTING.md`, HANDOFF trim, CLAUDE.md rewrite
+- `e687ad6` — A1+B perf fix + `subjectSearch|v2|` cache versioning +
+ `performance/concurrencyPool.js` + `docs/bug5-*`, `docs/bug6-*`,
+  `docs/README.md`, `docs/CONTRIBUTING.md`, HANDOFF trim, CLAUDE.md rewrite
 - `88a9d05` — phase(D17): strip `bp_phase1_*` + `bp_phase2_*` feature flags
 - `bbba06c` — docs: close Bug 1/3 in HANDOFF + D14 (shipped `5975c90`, verified live)
 - `5975c90` — phase2(bug1): close calibrator + solver gaps so "no X" constraints reach live run
