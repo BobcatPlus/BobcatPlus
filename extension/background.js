@@ -1,5 +1,22 @@
 //combined old Registration.js and DegreeAudit.js
 
+// Phase 1 wiring (2026-04-21): load the RequirementGraph parser modules so
+// `self.BPReq.buildGraphFromAudit` / `deriveEligible` are available inside
+// the MV3 service worker. Each module dual-exports (module.exports for Node
+// tests, `globalThis.BPReq` for this runtime). Behavior remains legacy
+// unless the `bp_phase1_wiring` feature flag is flipped in chrome.storage.
+try {
+  importScripts(
+    "requirements/graph.js",
+    "requirements/txstFromAudit.js",
+    "requirements/wildcardExpansion.js",
+  );
+} catch (e) {
+  // Never throw on module load — getAuditData falls back to legacy when
+  // BPReq is missing, and D13's postmortem-in-advance calls out this path.
+  console.warn("[BobcatPlus] RequirementGraph modules failed to load:", e);
+}
+
 const GRADE_MAP = { A: 4, B: 3, C: 2, D: 1, F: 0, CR: 4 };
 
 const SUBJECT_MAP = {
@@ -942,15 +959,71 @@ async function getAuditData(studentId, school, degree) {
     }
   }
 
-  function findNeeded(rules) {
+  // Phase 0 Bug 4 instrumentation: track every course entry we drop and WHY.
+  // Does NOT change behavior — still drops the same entries — but lets us
+  // measure the blast radius before the Phase X fix lands.
+  const dropped = {
+    wildcards: [],        // discipline === "@" || number === "@"
+    hideFromAdvice: [],   // course.hideFromAdvice === "Yes"
+    alreadyListed: [],    // duplicate course across rules (collapse of many-to-many)
+    ruleNotCourse: [],    // rule.ruleType !== "Course" but had non-Course content with options
+    completePercent: [],  // rule.percentComplete === "100" (skipped whole subtree)
+  };
+  const exceptClauses = []; // rule-level except arrays (today: ignored)
+
+  function findNeeded(rules, parentLabels = []) {
     for (const rule of rules) {
-      if (rule.ruleArray) findNeeded(rule.ruleArray);
-      if (String(rule.percentComplete) === "100") continue;
-      if (rule.ruleType !== "Course") continue;
+      if (rule.ruleArray) findNeeded(rule.ruleArray, parentLabels.concat([rule.label || ""]));
+      if (String(rule.percentComplete) === "100") {
+        if (rule.ruleType !== "Block") {
+          dropped.completePercent.push({
+            ruleType: rule.ruleType,
+            label: rule.label,
+            parentLabels: parentLabels.slice(),
+          });
+        }
+        continue;
+      }
+      // Track except clauses for later — Phase X will honor them.
+      if (rule.requirement && Array.isArray(rule.requirement.except) && rule.requirement.except.length) {
+        exceptClauses.push({
+          label: rule.label,
+          parentLabels: parentLabels.slice(),
+          except: rule.requirement.except,
+        });
+      }
+      if (rule.ruleType !== "Course") {
+        if (rule.requirement && rule.requirement.courseArray && rule.requirement.courseArray.length) {
+          dropped.ruleNotCourse.push({
+            ruleType: rule.ruleType,
+            label: rule.label,
+            parentLabels: parentLabels.slice(),
+            courseCount: rule.requirement.courseArray.length,
+          });
+        }
+        continue;
+      }
       if (!rule.requirement || !rule.requirement.courseArray) continue;
       for (const course of rule.requirement.courseArray) {
-        if (course.discipline === "@" || course.number === "@") continue;
-        if (course.hideFromAdvice === "Yes") continue;
+        if (course.discipline === "@" || course.number === "@") {
+          dropped.wildcards.push({
+            discipline: course.discipline,
+            number: course.number,
+            label: rule.label,
+            parentLabels: parentLabels.slice(),
+            withArray: course.withArray || null,
+          });
+          continue;
+        }
+        if (course.hideFromAdvice === "Yes") {
+          dropped.hideFromAdvice.push({
+            subject: course.discipline,
+            courseNumber: course.number,
+            label: rule.label,
+            parentLabels: parentLabels.slice(),
+          });
+          continue;
+        }
         const done = completed.some(
           (c) =>
             c.subject === course.discipline && c.courseNumber === course.number,
@@ -963,6 +1036,15 @@ async function getAuditData(studentId, school, degree) {
           (n) =>
             n.subject === course.discipline && n.courseNumber === course.number,
         );
+        if (already && !done && !ip) {
+          dropped.alreadyListed.push({
+            subject: course.discipline,
+            courseNumber: course.number,
+            label: rule.label,
+            parentLabels: parentLabels.slice(),
+            note: "course satisfies multiple rules; only first rule.label is retained",
+          });
+        }
         if (!done && !ip && !already) {
           needed.push({
             subject: course.discipline,
@@ -975,10 +1057,157 @@ async function getAuditData(studentId, school, degree) {
   }
 
   for (const block of audit.blockArray) {
-    if (block.ruleArray) findNeeded(block.ruleArray);
+    if (block.ruleArray) findNeeded(block.ruleArray, [block.title || ""]);
   }
 
-  return { completed, inProgress, needed };
+  // Phase 0: dump the tally + (optionally) samples so we can size Bug 4 precisely.
+  // Kept behind a debug flag so production runs stay quiet unless asked.
+  try {
+    const { bp_debug_audit } = await chrome.storage.local.get("bp_debug_audit");
+    if (bp_debug_audit) {
+      console.log("[BP audit drops]", {
+        counts: {
+          wildcards: dropped.wildcards.length,
+          hideFromAdvice: dropped.hideFromAdvice.length,
+          alreadyListed: dropped.alreadyListed.length,
+          ruleNotCourse: dropped.ruleNotCourse.length,
+          completePercent: dropped.completePercent.length,
+          exceptClauses: exceptClauses.length,
+        },
+        sample: {
+          wildcards: dropped.wildcards.slice(0, 5),
+          hideFromAdvice: dropped.hideFromAdvice.slice(0, 5),
+          alreadyListed: dropped.alreadyListed.slice(0, 5),
+          ruleNotCourse: dropped.ruleNotCourse.slice(0, 5),
+          exceptClauses: exceptClauses.slice(0, 3),
+        },
+      });
+    }
+  } catch (_) {
+    // chrome.storage not available in some test contexts; never throw from here
+  }
+
+  // Phase 1 wiring — see docs/decisions.md D13.
+  //
+  // Flags (read from chrome.storage.local; default OFF):
+  //   bp_phase1_wiring       — when true, needed[] is produced by the new
+  //                            RequirementGraph parser instead of findNeeded.
+  //   bp_phase1_shadow       — when true, both parsers run and discrepancies
+  //                            are logged + attached to auditDiagnostics.parity.
+  //                            Allowed independently of bp_phase1_wiring so we
+  //                            can watch behavior before flipping.
+  //
+  // If BPReq modules failed to load for any reason, both flags are ignored
+  // and we stay on the legacy path. This guard is the fallback called out in
+  // D13's postmortem failure mode #2.
+  let graph = null;
+  let derivedEntries = null;
+  let derivedWildcards = null;
+  let parity = null;
+  let flags = { wiring: false, shadow: false };
+  try {
+    const stored = await chrome.storage.local.get([
+      "bp_phase1_wiring",
+      "bp_phase1_shadow",
+    ]);
+    flags = {
+      wiring: !!stored.bp_phase1_wiring,
+      shadow: !!stored.bp_phase1_shadow,
+    };
+  } catch (_) {
+    // chrome.storage unavailable (tests) — stay on defaults.
+  }
+
+  const bpReqReady =
+    typeof self !== "undefined" &&
+    self.BPReq &&
+    typeof self.BPReq.buildGraphFromAudit === "function" &&
+    typeof self.BPReq.deriveEligible === "function";
+
+  if ((flags.wiring || flags.shadow) && bpReqReady) {
+    try {
+      graph = self.BPReq.buildGraphFromAudit(audit);
+      const derived = self.BPReq.deriveEligible(graph);
+      derivedEntries = derived.entries || [];
+      derivedWildcards = derived.wildcards || [];
+      parity = computeAuditParity(needed, derivedEntries);
+      if (flags.shadow) {
+        console.log("[BP phase1 shadow]", {
+          legacyCount: needed.length,
+          derivedCount: derivedEntries.length,
+          wildcardCount: derivedWildcards.length,
+          onlyInLegacy: parity.onlyInLegacy.length,
+          onlyInDerived: parity.onlyInDerived.length,
+        });
+      }
+    } catch (e) {
+      console.warn("[BobcatPlus] Phase 1 parser failed; falling back:", e);
+      graph = null;
+      derivedEntries = null;
+      derivedWildcards = null;
+      parity = { error: e.message || String(e) };
+    }
+  } else if (flags.wiring && !bpReqReady) {
+    console.warn(
+      "[BobcatPlus] bp_phase1_wiring is ON but BPReq modules are not loaded; " +
+        "falling back to legacy findNeeded. Check that requirements/*.js " +
+        "sit next to background.js and that importScripts succeeded.",
+    );
+  }
+
+  // When wiring is ON and the derived entries are usable, the new parser
+  // becomes the source of truth for needed[]. The flat shape is identical
+  // enough that downstream code (runAnalysis → searchCourse) works unchanged.
+  let finalNeeded = needed;
+  if (flags.wiring && derivedEntries && derivedEntries.length > 0) {
+    finalNeeded = derivedEntries
+      .filter((e) => !e.hideFromUi) // hideFromAdvice fallbacks: surface in graph, not in needed
+      .map((e) => ({
+        subject: e.subject,
+        courseNumber: e.courseNumber,
+        label: e.label || "",
+        parentLabels: e.parentLabels || [],
+        ruleId: e.ruleId || null,
+      }));
+  }
+
+  return {
+    completed,
+    inProgress,
+    needed: finalNeeded,
+    auditDiagnostics: { dropped, exceptClauses, parity, phase1Flags: flags },
+    graph,
+    wildcards: derivedWildcards,
+  };
+}
+
+// Compute a legacy-vs-new parity summary: which courses are listed by
+// findNeeded but not the new parser, which are new-only, and a cheap sample
+// of each for log readability. Pure, no I/O.
+function computeAuditParity(legacy, derived) {
+  function key(c) {
+    return (c.subject || "") + "|" + (c.courseNumber || "");
+  }
+  const legacyKeys = new Map();
+  for (const c of legacy) legacyKeys.set(key(c), c);
+  const derivedKeys = new Map();
+  for (const c of derived) derivedKeys.set(key(c), c);
+  const onlyInLegacy = [];
+  const onlyInDerived = [];
+  for (const [k, v] of legacyKeys) {
+    if (!derivedKeys.has(k)) onlyInLegacy.push(v);
+  }
+  for (const [k, v] of derivedKeys) {
+    if (!legacyKeys.has(k)) onlyInDerived.push(v);
+  }
+  return {
+    legacyCount: legacy.length,
+    derivedCount: derived.length,
+    onlyInLegacy,
+    onlyInDerived,
+    sampleOnlyInLegacy: onlyInLegacy.slice(0, 5),
+    sampleOnlyInDerived: onlyInDerived.slice(0, 5),
+  };
 }
 
 const REG_BASE = "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb";
@@ -1773,11 +2002,14 @@ async function runAnalysis(sendUpdate, termCodeOverride, isCurrent, { forceRefre
   sendUpdate({ type: "student", data: student });
 
   sendUpdate({ type: "status", message: "Loading degree audit..." });
-  const { completed, inProgress, needed } = await getAuditData(
-    student.id,
-    student.school,
-    student.degree,
-  );
+  const {
+    completed,
+    inProgress,
+    needed,
+    auditDiagnostics,
+    graph,
+    wildcards,
+  } = await getAuditData(student.id, student.school, student.degree);
   if (bail()) return;
   sendUpdate({
     type: "audit",
@@ -1898,7 +2130,22 @@ async function runAnalysis(sendUpdate, termCodeOverride, isCurrent, { forceRefre
   );
 
   if (bail()) return;
-  sendUpdate({ type: "done", data: { eligible, blocked, notOffered, needed, cacheTs: oldestCacheTs } });
+  sendUpdate({
+    type: "done",
+    data: {
+      eligible,
+      blocked,
+      notOffered,
+      needed,
+      cacheTs: oldestCacheTs,
+      auditDiagnostics,
+      // Phase 1: graph + wildcards flow through but are not yet consumed by
+      // the solver. Populated only when bp_phase1_wiring or bp_phase1_shadow
+      // flag is on; otherwise null so the payload shape stays stable.
+      graph,
+      wildcards,
+    },
+  });
 }
 
 // --- Get available terms ---
