@@ -1,17 +1,26 @@
-// Bobcat Plus — Wildcard expansion primitives (Phase 1, Layer B stub).
+// Bobcat Plus — Wildcard expansion primitives (Bug 4 Layer B + C).
 //
-// DegreeWorks exposes a `courseInformation` endpoint that takes a subject
-// (optionally a number prefix or attribute filter) and returns a list of
-// matching courses with inline section data for each offered term. This
-// file contains the pure normalizer that turns a raw `courseInformation`
-// JSON response into the shape the schedule generator already consumes —
-// no network, no chrome.* API usage, fully unit-testable against the
-// `tests/fixtures/wildcard/cs-4@.json` fixture.
+// DegreeWorks exposes a `/api/course-link` endpoint (response wrapped in a
+// `courseInformation` envelope, hence the historical name) that takes a
+// subject + number pattern and returns a list of matching courses with
+// inline section data for each offered term. This file contains:
 //
-// The actual HTTP fetcher lives in `background.js` and is still pending
-// Layer B (step 4 in the HANDOFF Next-action list): we need to capture
-// the exact endpoint URL + params from a live DevTools trace before
-// wiring it up. See `docs/decisions.md` D13 for the split rationale.
+//   - `normalizeCourseInformationCourses` — pure parser that turns a raw
+//     response into schedule-generator-ready entries. Fixture-backed by
+//     `tests/fixtures/wildcard/cs-4@.json`. No network, no chrome.* API.
+//
+//   - `expandAuditWildcards` — pure async orchestrator that takes the
+//     wildcard records `deriveEligible()` surfaces, an injected
+//     `fetchCourseLink(subject, numberPattern)` callback, and the current
+//     termCode; resolves each wildcard into concrete `needed[]` entries
+//     with `except` subtraction applied. Used by `background.js` to fold
+//     wildcard expansions into the eligible pool before section search.
+//     Tests inject a canned fetcher that replays the cs-4@ fixture.
+//
+// The actual HTTP fetcher + chrome.storage cache is `fetchCourseLinkFromDW`
+// in `background.js`; it's split out so this module stays runtime-agnostic
+// and unit-testable in plain Node. See `docs/decisions.md` D13 for the
+// parser/fetcher split rationale.
 //
 // Dual-export: usable both in the extension runtime (attaches to
 // `globalThis.BPReq`) and in Node unit tests (`module.exports`).
@@ -128,6 +137,167 @@
     return out;
   }
 
+  // ─── orchestration: audit wildcards → concrete needed[] entries ─────────
+  //
+  // Bug 4 Layer B (wildcard expansion) + Layer C (honor `except`).
+  //
+  // Inputs:
+  //   input.wildcards     Array from `deriveEligible(graph).wildcards`.
+  //                       Each entry has { discipline, numberPrefix,
+  //                       ruleLabel, ruleId, parentLabels, exceptOptions,
+  //                       kind }.
+  //   input.needed        Existing concrete needed[] entries
+  //                       ({subject, courseNumber, label, ...}); used
+  //                       for dedupe so expansion doesn't double-add a
+  //                       course that another (concrete) rule already
+  //                       contributed.
+  //   input.completed     Student's completed courses ({subject,
+  //                       courseNumber, grade}); expansion entries that
+  //                       match are skipped.
+  //   input.inProgress    Student's in-progress courses; skipped too.
+  //
+  //   options.fetchCourseLink  Required async `(subject, numberPattern) →
+  //                            raw JSON | null`. The HTTP + cache wrapper
+  //                            lives in background.js; tests pass a
+  //                            fixture-replaying stub.
+  //   options.termCode         Optional Banner term code (e.g. "202630").
+  //                            When set, each entry's inline sections[]
+  //                            is filtered to that term. Entries whose
+  //                            sections become empty after filtering are
+  //                            dropped — eligible-for-this-term is the
+  //                            contract; courses not offered this term
+  //                            don't belong on the student's list.
+  //
+  // Returns { needed, added, failures, skipped }:
+  //   needed      input.needed concatenated with new expansion entries
+  //               (same shape as concrete needed[]: {subject,
+  //               courseNumber, label, parentLabels, ruleId}).
+  //   added       Just the new entries (for diagnostics / logging).
+  //   failures    Wildcards that threw or returned null from the fetcher;
+  //               each is { wildcard, error } so callers can log them
+  //               without masking which requirement surfaced no options.
+  //   skipped     Wildcards intentionally not fetched (today: attribute-
+  //               only `@@ with ATTRIBUTE=xxx`, which is Layer D1/D2).
+  //
+  // Layer B scope: subject wildcards (`CS @`, `CS 4@`) and subject-plus-
+  // number-prefix wildcards. Attribute-only wildcards (`@ @` with a
+  // `with` clause) are skipped for now — the bug4 diagnosis doc defers
+  // them to Layer D; the hideFromAdvice concrete siblings that
+  // RequirementGraph already surfaces typically cover that case in
+  // practice. See docs/bug4-eligible-diagnosis.md.
+  async function expandAuditWildcards(input, options) {
+    const safeInput = input || {};
+    const wildcards = Array.isArray(safeInput.wildcards)
+      ? safeInput.wildcards
+      : [];
+    const needed = Array.isArray(safeInput.needed) ? safeInput.needed : [];
+    const completed = Array.isArray(safeInput.completed)
+      ? safeInput.completed
+      : [];
+    const inProgress = Array.isArray(safeInput.inProgress)
+      ? safeInput.inProgress
+      : [];
+
+    const opts = options || {};
+    const fetchCourseLink = opts.fetchCourseLink;
+    const termCode = opts.termCode || null;
+
+    if (typeof fetchCourseLink !== "function") {
+      throw new Error(
+        "expandAuditWildcards: options.fetchCourseLink is required (async (subject, numberPattern) → raw JSON)",
+      );
+    }
+
+    const dedupe = new Set();
+    for (const c of completed) {
+      if (c && c.subject && c.courseNumber) {
+        dedupe.add(c.subject + "|" + c.courseNumber);
+      }
+    }
+    for (const c of inProgress) {
+      if (c && c.subject && c.courseNumber) {
+        dedupe.add(c.subject + "|" + c.courseNumber);
+      }
+    }
+    for (const c of needed) {
+      if (c && c.subject && c.courseNumber) {
+        dedupe.add(c.subject + "|" + c.courseNumber);
+      }
+    }
+
+    const added = [];
+    const failures = [];
+    const skipped = [];
+
+    for (const w of wildcards) {
+      if (!w || typeof w !== "object") continue;
+      const disc = w.discipline || "";
+
+      // Layer B boundary: must have a concrete subject. `@` on the
+      // subject side means attribute-only wildcards (Math core
+      // `@@ with ATTRIBUTE=020` etc.) — those go through Layer D.
+      if (!disc || disc === "@") {
+        skipped.push({ wildcard: w, reason: "attribute-only wildcard (Layer D)" });
+        continue;
+      }
+
+      const numberPattern = (w.numberPrefix || "") + "@";
+
+      let raw = null;
+      try {
+        raw = await fetchCourseLink(disc, numberPattern);
+      } catch (e) {
+        failures.push({
+          wildcard: w,
+          error: (e && (e.message || String(e))) || "fetcher threw",
+        });
+        continue;
+      }
+      if (!raw) {
+        failures.push({ wildcard: w, error: "fetcher returned null" });
+        continue;
+      }
+
+      const excludeKeys = exceptionKeysFromWildcard(w);
+      const entries = normalizeCourseInformationCourses(raw, {
+        termCode,
+        excludeKeys,
+        ruleLabel: w.ruleLabel || "",
+        ruleId: w.ruleId || null,
+        parentLabels: Array.isArray(w.parentLabels) ? w.parentLabels : [],
+      });
+
+      for (const e of entries) {
+        const key = e.subject + "|" + e.courseNumber;
+        if (dedupe.has(key)) continue;
+        // Drop courses that have zero sections for the target term. When
+        // `termCode` is null (no term scoping) we keep everything — the
+        // caller is asking for the full wildcard expansion regardless of
+        // term. When termCode is set and sections is empty, the course
+        // literally isn't offered this term; surfacing it would just
+        // clutter the eligible pool.
+        if (termCode && (!e.sections || e.sections.length === 0)) continue;
+        dedupe.add(key);
+        added.push({
+          subject: e.subject,
+          courseNumber: e.courseNumber,
+          label: e.label || "",
+          parentLabels: Array.isArray(e.parentLabels)
+            ? e.parentLabels.slice()
+            : [],
+          ruleId: e.ruleId || null,
+        });
+      }
+    }
+
+    return {
+      needed: needed.concat(added),
+      added,
+      failures,
+      skipped,
+    };
+  }
+
   // ─── internals ───────────────────────────────────────────────────────────
 
   function _extractCourses(raw) {
@@ -151,6 +321,7 @@
     normalizeCourseInformationCourses,
     wildcardCacheKey,
     exceptionKeysFromWildcard,
+    expandAuditWildcards,
   };
 
   if (typeof module === "object" && module.exports) {

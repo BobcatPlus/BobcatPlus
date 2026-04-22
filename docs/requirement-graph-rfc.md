@@ -1,6 +1,6 @@
 # RFC — RequirementGraph (Phase 1 design, TXST only)
 
-Status: **Draft, no code yet.** Reviewer: Aidan. Supersedes the flat `needed[]` contract
+Status: **Draft, no code yet.** Reviewer: <reviewer>. Supersedes the flat `needed[]` contract
 between `background.js` and `scheduleGenerator.js`.
 
 Scope: **Texas State University** DegreeWorks audits only. No adapter interface,
@@ -18,14 +18,13 @@ The current flat `needed[]` contract loses two kinds of structural information t
 solver and LLM both need:
 
 1. **Sibling exclusivity.** Modern Language Requirement is a `Group` with
-   `advice.numberGroupsNeeded: 1` over 12 children (Arabic, Chinese, Spanish, …). The
+  `advice.numberGroupsNeeded: 1` over 12 children (Arabic, Chinese, Spanish, …). The
    student must **pick one language and take all four courses in it** — not cherry-pick
    one course from each. The flat list flattens the Group away and emits 40+ independent
    "needed" entries, so the solver (correctly, given what it sees) mixes languages. This
    is Bug 2.
-
 2. **Quantified subsets and wildcards.** Rules like `classesBegin: 4` over a
-   `courseArray` of 4 courses are "take all four of these". Rules like `creditsBegin: 15`
+  `courseArray` of 4 courses are "take all four of these". Rules like `creditsBegin: 15`
    over 40 courses are "take 15 credits worth from this list". Rules like
    `{discipline: "BIO", number: "@"}` are "any course in BIO". None of these reduce
    cleanly to a flat list of required courses.
@@ -39,36 +38,38 @@ shape that preserves it.
 
 Counts from `audit-english-ba.json`:
 
-| `ruleType` | Count | Role in graph |
-|---|---|---|
-| `Block` | 7 | Top-level section (Degree, Core, Major, Minor, …). Acts like AllOf over children. |
-| `Blocktype` | few | Cross-reference to another block. Resolves to its target. |
-| `Subset` | 3 | AllOf over children. Each child has its own quantifier. |
-| `Group` | N | ChooseN over children. `advice.numberGroupsNeeded` is N. |
-| `Course` | many | Leaf quantified requirement: "take N from this courseArray". |
-| `Complete` / `Incomplete` | several | Status markers; not graph structure. |
+
+| `ruleType`                | Count   | Role in graph                                                                     |
+| ------------------------- | ------- | --------------------------------------------------------------------------------- |
+| `Block`                   | 7       | Top-level section (Degree, Core, Major, Minor, …). Acts like AllOf over children. |
+| `Blocktype`               | few     | Cross-reference to another block. Resolves to its target.                         |
+| `Subset`                  | 3       | AllOf over children. Each child has its own quantifier.                           |
+| `Group`                   | N       | ChooseN over children. `advice.numberGroupsNeeded` is N.                          |
+| `Course`                  | many    | Leaf quantified requirement: "take N from this courseArray".                      |
+| `Complete` / `Incomplete` | several | Status markers; not graph structure.                                              |
+
 
 Other observed non-rule-typed fields that carry semantics:
 
 - `requirement.classesBegin`, `creditsBegin`, `creditsEnd` — quantifier for a Course leaf.
 - `requirement.courseArray[]` — options under a Course leaf. Entries may be concrete
-  (`{discipline: "ENG", number: "3348"}`), subject wildcards
-  (`{discipline: "BIO", number: "@"}`), or universal wildcards with attribute filters
-  (`{discipline: "@", number: "@", withArray: [...]}`).
+(`{discipline: "ENG", number: "3348"}`), subject wildcards
+(`{discipline: "BIO", number: "@"}`), or universal wildcards with attribute filters
+(`{discipline: "@", number: "@", withArray: [...]}`).
 - `requirement.except.courseArray[]` — exclusions applied to the parent courseArray.
 - `classesAppliedToRule.classArray[]` — courses already applied (completed or IP).
-  Drives "what's left".
+Drives "what's left".
 - `advice.classes`, `advice.courseArray`, `advice.numberGroupsNeeded` — **recommendations**
-  from DegreeWorks about what's still needed, in a friendlier form. Useful for UX, not
-  authoritative for satisfaction.
+from DegreeWorks about what's still needed, in a friendlier form. Useful for UX, not
+authoritative for satisfaction.
 - `withArray[]` — per-course-option constraints (e.g. `DWTITLE =  INTRO CREATIVE WRITING`,
-  `ATTRIBUTE = 020`).
+`ATTRIBUTE = 020`).
 - `exceptionArray[]` — advisor-granted exceptions (substitutions/waivers). Must be
-  honored.
+honored.
 - `hideFromAdvice` — "don't feature in UI", **not** "invalid". Currently mis-filtered.
 - `percentComplete` — derived; useful for prioritizing "nearly-done" paths.
 - `ifElsePart: "IfPart" | "ElsePart"` — conditional branches. Seen rarely in this audit;
-  keep an eye out.
+keep an eye out.
 
 ---
 
@@ -170,22 +171,24 @@ type CourseKey = `${string}|${string}`;  // e.g. "ENG|3329"
 
 ### DegreeWorks → graph mapping rules
 
-| DW construct | Graph node | Notes |
-|---|---|---|
-| `blockArray[i]` (top level) | `BlockNode` | `blockType` from `requirementType` + `requirementValue`. |
-| `ruleType: "Blocktype"` | `BlocktypeRefNode` | Resolve to the referenced block during traversal. |
-| `ruleType: "Subset"` | `AllOfNode` | `requirement` is often `{}`; each child carries its own quantifier. |
-| `ruleType: "Group"` | `ChooseNGroupsNode` | `n = advice.numberGroupsNeeded`. Validate that `advice.numberGroupsNeeded` is present; fall back to `requirement.numberOfGroups` if missing. |
-| `ruleType: "Course"` with N>0 options | `CourseQuantifiedNode` | `take.classes = classesBegin` if present; `take.credits = {min: creditsBegin, max: creditsEnd}` if present. |
-| `ruleType: "Course"` with 1 concrete option | could be `CourseSlotNode` | Optimization only; equivalent to CourseQuantifiedNode with take=1. |
-| `ruleType: "Complete"/"Incomplete"` | `StatusNode` | Mostly informational; can be skipped during solving. |
+
+| DW construct                                | Graph node                | Notes                                                                                                                                        |
+| ------------------------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `blockArray[i]` (top level)                 | `BlockNode`               | `blockType` from `requirementType` + `requirementValue`.                                                                                     |
+| `ruleType: "Blocktype"`                     | `BlocktypeRefNode`        | Resolve to the referenced block during traversal.                                                                                            |
+| `ruleType: "Subset"`                        | `AllOfNode`               | `requirement` is often `{}`; each child carries its own quantifier.                                                                          |
+| `ruleType: "Group"`                         | `ChooseNGroupsNode`       | `n = advice.numberGroupsNeeded`. Validate that `advice.numberGroupsNeeded` is present; fall back to `requirement.numberOfGroups` if missing. |
+| `ruleType: "Course"` with N>0 options       | `CourseQuantifiedNode`    | `take.classes = classesBegin` if present; `take.credits = {min: creditsBegin, max: creditsEnd}` if present.                                  |
+| `ruleType: "Course"` with 1 concrete option | could be `CourseSlotNode` | Optimization only; equivalent to CourseQuantifiedNode with take=1.                                                                           |
+| `ruleType: "Complete"/"Incomplete"`         | `StatusNode`              | Mostly informational; can be skipped during solving.                                                                                         |
+
 
 ### Handling `hideFromAdvice`
 
 - **At the rule level** (`rule.hideFromAdvice`): set `hideFromUi: true`; still include in
-  the graph; solver ignores the flag.
+the graph; solver ignores the flag.
 - **At the courseArray-entry level** (`courseArray[i].hideFromAdvice`): set
-  `hideFromUi: true` on the `CourseOption`; solver still considers it valid.
+`hideFromUi: true` on the `CourseOption`; solver still considers it valid.
 
 Never drop solely because of `hideFromAdvice`. This is the partial fix for Bug 4.
 
@@ -209,12 +212,12 @@ wildcard option verbatim; the **section-index builder** (see below) expands each
 wildcard into its concrete candidate set by querying Banner.
 
 - `subjectWildcard`: call `searchSubject(subject, term)` (paginated, cached per term).
-  Filter out `except` courses for the node that owns the wildcard.
+Filter out `except` courses for the node that owns the wildcard.
 - `attributeWildcard`: **not resolvable from current Banner endpoint** (evidence: Banner
-  dumps contain zero attribute strings). Handled via the concrete fallback courses
-  listed alongside (the `hideFromAdvice: "Yes"` entries Layer A now preserves). Flag the
-  unresolved wildcard so the UI can indicate "catalog-level attribute match — verify
-  with advisor".
+dumps contain zero attribute strings). Handled via the concrete fallback courses
+listed alongside (the `hideFromAdvice: "Yes"` entries Layer A now preserves). Flag the
+unresolved wildcard so the UI can indicate "catalog-level attribute match — verify
+with advisor".
 
 ### Many-to-many indexing
 
@@ -251,32 +254,27 @@ sibling courses at a time".
 ## Open design questions
 
 1. **Group semantics edge case.** The "Content Requirements" block
-   (`audit-english-ba.json:5329`) is a Group with `numberOfGroups: 3` and
+  (`audit-english-ba.json:5329`) is a Group with `numberOfGroups: 3` and
    `numberGroupsNeeded: 1`. Three children, all "in-progress", and the student's
    percentComplete is 82. Is `numberGroupsNeeded` "at least" or "exactly"? Proposed
    reading: "at least 1 group must be fully complete; additional complete groups don't
    hurt". Validate against more real audits (need the CS BS one).
-
-2. **`classCreditOperator: "OR" | "AND"`** on Course leaves. When both `classesBegin`
-   and `creditsBegin` are present, does "OR" mean either threshold satisfies? Working
+2. `**classCreditOperator: "OR" | "AND"*`* on Course leaves. When both `classesBegin`
+  and `creditsBegin` are present, does "OR" mean either threshold satisfies? Working
    assumption: yes, OR → min(classes, credits-equivalent) counts. Confirm via the
    CS BS audit where engineering-style credit-hour rules are common.
-
-3. **`ifElsePart: "IfPart" | "ElsePart"`** — conditional rule branches. Rare in this
-   audit. Likely tied to transfer credit / test credit / catalog-year switches. Need a
+3. `**ifElsePart: "IfPart" | "ElsePart"**` — conditional rule branches. Rare in this
+  audit. Likely tied to transfer credit / test credit / catalog-year switches. Need a
    second audit to see a real example before designing.
-
 4. **Attribute resolution without catalog attributes.** If the concrete fallback courses
-   listed under `@@ with ATTRIBUTE=xxx` prove insufficient in testing, we need a Banner
+  listed under `@@ with ATTRIBUTE=xxx` prove insufficient in testing, we need a Banner
    endpoint that surfaces section attributes. Investigation task, not blocking Phase 1.
-
 5. **What happens when a concrete course is offered in *both* a major Core node and a
-   minor elective node?** Under many-to-many, we treat it as satisfying both
+  minor elective node?** Under many-to-many, we treat it as satisfying both
    simultaneously (subject to DW `NONEXCLUSIVE` qualifier). Some rules have an
    `EXCLUSIVE` qualifier (`DontShare`) — the BA Science Requirement has one. Need to
    honor these in the solver: a course used under an exclusive node can't double-count
    elsewhere.
-
    **2026-04-21 — product decision (see `docs/decisions.md` D9).** Many-to-many
    is not just a solver mechanic; we surface it to students. When a course
    satisfies multiple `NONEXCLUSIVE` rules, the schedule UI and the AI rationale
@@ -285,7 +283,6 @@ sibling courses at a time".
    asks to swap it, the AI explains the downstream impact on remaining
    credits/requirements. This turns the graph's `courseIndex` from a purely
    internal structure into a first-class UX primitive.
-
    Implementation implication: the graph-native solver (Phase 1.5) must return
    per-schedule a `satisfactionTable: { courseKey -> ruleId[] }` that the
    rationale prompt can consume. `EXCLUSIVE` rules produce entries of length
@@ -293,9 +290,8 @@ sibling courses at a time".
    ranking can then reward schedules whose `satisfactionTable` has high
    multi-count density as a soft objective ("prefer courses that knock out
    multiple boxes at once").
-
 6. **Credit counting across wildcard expansions.** If the BA Science Requirement can be
-   satisfied by BIO 1330 (3 cr) or BIO 1430 (4 cr) with `creditsBegin: 3, creditsEnd: 4`,
+  satisfied by BIO 1330 (3 cr) or BIO 1430 (4 cr) with `creditsBegin: 3, creditsEnd: 4`,
    the solver needs to honor both the count and the credit ceiling per rule. Design is
    straightforward but testable edge case.
 
@@ -304,26 +300,26 @@ sibling courses at a time".
 ## Not in scope for this RFC
 
 - The CSP solver rewrite to operate on the graph natively. That's Phase 1.5 and will
-  get its own RFC when we have a working parser + derived compatibility layer.
+get its own RFC when we have a working parser + derived compatibility layer.
 - UX changes that surface rule-satisfaction ("this course satisfies X AND Y"). Phase 3
-  or later; enabled by the many-to-many index but not required by it.
+or later; enabled by the many-to-many index but not required by it.
 - Scoring and ranking changes (Phase 2+).
 - Any LLM prompt changes. The intent/affinity/rationale prompts continue to consume
-  the derived `eligible[]` view; they don't need to know about the graph yet.
+the derived `eligible[]` view; they don't need to know about the graph yet.
 
 ---
 
 ## Concrete next steps, in order
 
 1. Review this RFC. Push back on types or mappings that feel wrong against your
-   mental model of TXST audits.
+  mental model of TXST audits.
 2. Grab the CS BS audit JSON. Spot-check every new rule shape it introduces against
-   this RFC. If anything is absent, add a typed variant.
+  this RFC. If anything is absent, add a typed variant.
 3. Get explicit sign-off that Phase 1 ships as **parser + contract change only**, with
-   the solver continuing to consume a flat `eligible[]` derived from the graph. Solver
+  the solver continuing to consume a flat `eligible[]` derived from the graph. Solver
    native-graph consumption is Phase 1.5.
 4. Only then: build `extension/requirements/graph.js` + `extension/requirements/txstFromAudit.js`,
-   plus parser unit tests running against the audit fixtures.
+  plus parser unit tests running against the audit fixtures.
 
 ---
 
@@ -339,16 +335,18 @@ the RFC:
 
 Open question 1 ("Is `advice.numberGroupsNeeded` at-least or exactly?") is replaced by
 a cleaner contract: **the authoritative source is `requirement.numberOfGroups` on the
-Group rule itself**, not `advice.*`. Observed across both audits:
+Group rule itself**, not `advice.`*. Observed across both audits:
 
-| Block → Group | `numberOfGroups` | `numberOfRules` | Meaning |
-|---|---|---|---|
-| CS major → Mathematics Requirement | 5 | 5 | AllOf (all 5 children required) |
-| CS major → English Requirement | 1 | 2 | Choose 1 of 2 (ENG 3303 or equiv.) |
-| CS major → Prerequisites for CS 2315 | 3 | 3 | AllOf |
-| CS major → BS Natural Science Requirement | 2 | 2 | AllOf |
-| English BA → Modern Language Requirement | **1** | **12** | **Choose 1 of 12** — this is Bug 2 |
-| English CW → English Group Requirements | 4 | 4 | AllOf (Groups A/B/C/D all required) |
+
+| Block → Group                             | `numberOfGroups` | `numberOfRules` | Meaning                             |
+| ----------------------------------------- | ---------------- | --------------- | ----------------------------------- |
+| CS major → Mathematics Requirement        | 5                | 5               | AllOf (all 5 children required)     |
+| CS major → English Requirement            | 1                | 2               | Choose 1 of 2 (ENG 3303 or equiv.)  |
+| CS major → Prerequisites for CS 2315      | 3                | 3               | AllOf                               |
+| CS major → BS Natural Science Requirement | 2                | 2               | AllOf                               |
+| English BA → Modern Language Requirement  | **1**            | **12**          | **Choose 1 of 12** — this is Bug 2  |
+| English CW → English Group Requirements   | 4                | 4               | AllOf (Groups A/B/C/D all required) |
+
 
 Rule for the parser: `n = parseInt(requirement.numberOfGroups, 10)`. If
 `n === numberOfRules`, the node is effectively `AllOfNode`; otherwise it's
@@ -358,22 +356,22 @@ This changes two things in the RFC:
 
 - Drop the `advice.numberGroupsNeeded`-as-primary rule from the mapping table (line 178).
 - `AllOfNode` is no longer only derived from `Subset` — it's also the degenerate form of
-  `Group` when `numberOfGroups === numberOfRules`. Collapse at parse time for simplicity.
+`Group` when `numberOfGroups === numberOfRules`. Collapse at parse time for simplicity.
 
 ### `CourseQuantifiedNode.take` — credits vs classes
 
 Evidence from CS:
 
 - `Course` rule with `classesBegin: "1"` and no `creditsBegin` → "take 1 class". Most
-  of the major core.
+of the major core.
 - `Course` rule with `creditsBegin: "12"` and no `classesBegin` → "take 12 credits".
-  The CS Advanced Electives rule (L3 above).
+The CS Advanced Electives rule (L3 above).
 - `Course` rule with `classesBegin: "4"` → "take 4 classes from this list (in the order
-  the list is in, per `connector: "+"`)". Every language-track rule under Modern
-  Language.
+the list is in, per `connector: "+"`)". Every language-track rule under Modern
+Language.
 - `Course` rule with `creditsBegin: "8"` + `classCreditOperator: "OR"` → "take 8
-  credits OR equivalent". The BS Natural Science lab pair rules (e.g.
-  `CHEM1341, CHEM1141, CHEM1342, CHEM1142`).
+credits OR equivalent". The BS Natural Science lab pair rules (e.g.
+`CHEM1341, CHEM1141, CHEM1342, CHEM1142`).
 
 The `{classes?, credits?{min,max}}` shape in `CourseQuantifiedNode.take` is correct.
 Add a field `mode: "classes" | "credits" | "both"` so downstream can tell which
@@ -414,20 +412,19 @@ enforce prereq order inside the node; Phase 1 simply records it.
 This is categorically better than Banner's subject search for wildcard expansion:
 
 1. **Attribute strings are present** (`DTSC`, `3PEX`, `TOPC`, `WRIT`). Banner's
-   `searchResults` endpoint does not surface these. That means Layer D
+  `searchResults` endpoint does not surface these. That means Layer D
    ("attribute-based wildcards", the `@ @ with ATTRIBUTE=xxx` case) becomes viable
    through this endpoint instead of needing per-section attribute lookups.
 2. **Sections are already attached.** No second Banner call per course. We get
-   `sections: [{termCode, termLiteral, courseReferenceNumber, campusCode, ...}]`
+  `sections: [{termCode, termLiteral, courseReferenceNumber, campusCode, ...}]`
    inline, with all the fields `scheduleGenerator.js` needs today.
 3. **The filter is already scoped** (`CS 4@` returns just 4000-level CS, not all CS).
-   No client-side regex filter needed.
+  No client-side regex filter needed.
 
 Implication for the RFC:
 
 - Rename the "section-index builder" from "Banner-based" to "DegreeWorks-preferred,
-  Banner-fallback". Concretely:
-
+Banner-fallback". Concretely:
   ```
   resolveWildcard(option, term):
     1. If option is {discipline: X, number: "@"}:
@@ -438,9 +435,8 @@ Implication for the RFC:
     3. If option is {discipline: X, number: "3358"} (concrete):
          no wildcard resolution needed; lookup sections via existing Banner cache
   ```
-
 - This collapses Layer D1/D2 from the Bug 4 diagnosis into a single path, and likely
-  collapses Layer B into it too. Bug 4 gets simpler, not more complex.
+collapses Layer B into it too. Bug 4 gets simpler, not more complex.
 
 ### `exceptCourses` — confirmed with wildcards
 
@@ -482,22 +478,23 @@ resolved the open semantic questions:
 
 1. (Done) Pull correct CS BS audit; verify Group semantics via `numberOfGroups`. ✅
 2. Explicit sign-off from reviewer that the parser ships as an **additive module**
-   (`extension/requirements/`) that produces the graph + a derived `eligible[]`
+  (`extension/requirements/`) that produces the graph + a derived `eligible[]`
    compatibility view, with *no runtime wiring change* in this commit. Solver continues
    to consume `eligible[]` unchanged.
 3. Build `extension/requirements/graph.js` (types + invariants) and
-   `extension/requirements/txstFromAudit.js` (DW → graph transform).
+  `extension/requirements/txstFromAudit.js` (DW → graph transform).
 4. Fixture-driven unit tests in `tests/unit/requirements.test.js` asserting:
-   - English BA → Modern Language Group has `n=1, children=12`.
-   - CS BS → Mathematics Group collapses to `AllOfNode` (since `numberOfGroups=5=numberOfRules=5`).
-   - CS Advanced Electives → `CourseQuantifiedNode` with `take.credits.min=12`,
-     `options=[CS3@, CS4@]` wildcards, `exceptOptions=[CS2@, CS3354, CS3358, ...]`.
-   - `hideFromAdvice` courses are preserved on `CourseOption.hideFromUi=true` but still
-     included as valid options.
+  - English BA → Modern Language Group has `n=1, children=12`.
+  - CS BS → Mathematics Group collapses to `AllOfNode` (since `numberOfGroups=5=numberOfRules=5`).
+  - CS Advanced Electives → `CourseQuantifiedNode` with `take.credits.min=12`,
+  `options=[CS3@, CS4@]` wildcards, `exceptOptions=[CS2@, CS3354, CS3358, ...]`.
+  - `hideFromAdvice` courses are preserved on `CourseOption.hideFromUi=true` but still
+  included as valid options.
 5. Wire-in (separate commit, gated on all tests green):
-   - `background.js` returns `{graph, sectionIndex, studentProfile}` instead of only
-     `{needed, completed, inProgress}`.
-   - A `deriveEligible(graph, sectionIndex)` function produces the legacy flat shape.
-   - `scheduleGenerator.js` receives both; `compressForSolver` prefers
-     `rawData.eligible` if present, else derives it. This keeps the solver change to
-     Phase 1.5.
+  - `background.js` returns `{graph, sectionIndex, studentProfile}` instead of only
+   `{needed, completed, inProgress}`.
+  - A `deriveEligible(graph, sectionIndex)` function produces the legacy flat shape.
+  - `scheduleGenerator.js` receives both; `compressForSolver` prefers
+  `rawData.eligible` if present, else derives it. This keeps the solver change to
+  Phase 1.5.
+

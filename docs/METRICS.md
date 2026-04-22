@@ -5,6 +5,7 @@ against these numbers. Anything that can't be measured by one of these (or a new
 added to this file first) is not a feature, it's a guess.
 
 Every metric has:
+
 - **Inputs** — what it consumes, named exactly as in code.
 - **Formula** — how it's computed. No hand-waving.
 - **Range** — the guaranteed output range.
@@ -18,11 +19,13 @@ Every metric has:
 How much of what the student asked for was actually respected.
 
 **Inputs:**
+
 - `schedule.honoredPreferences: string[]` — from `buildRationaleFacts` in
-  `scheduleGenerator.js`.
+`scheduleGenerator.js`.
 - `schedule.unhonoredPreferences: string[]` — same source.
 
 **Formula:**
+
 ```
 h = schedule.honoredPreferences.length
 u = schedule.unhonoredPreferences.length
@@ -47,9 +50,11 @@ A 5-dimensional fingerprint of schedule shape. Used as the input to
 `archetypeDistance`.
 
 **Inputs:**
+
 - `schedule.courses[]` with fields `days[], start, end, online, credits`.
 
 **Formula (pure function of the schedule):**
+
 ```
 morningHours      = Σ over in-person courses of max(0, min(end, 12:00) - start)    / 60
 afternoonHours    = Σ over in-person courses of max(0, min(end, 17:00) - max(start, 12:00)) / 60
@@ -62,6 +67,7 @@ Times use 24-hour `HHMM`-as-minutes math (already standard in the code; see
 `toMinutes`).
 
 **Range:**
+
 - morningHours: `[0, 4·(#classes)]` hours
 - afternoonHours: `[0, 5·(#classes)]` hours
 - eveningHours: `[0, 8·(#classes)]` hours
@@ -80,9 +86,11 @@ How different, in shape, the returned top-K schedules are from one another. Our
 current target is K=3.
 
 **Inputs:**
+
 - `topK: Schedule[]` — usually the 3 returned picks.
 
 **Formula:**
+
 ```
 V_i = archetypeVector(topK[i])
 
@@ -104,10 +112,11 @@ archetypeDistance = mean over pairs of  mean over j in 0..4 of  |V_i_norm[j] - V
 **Unit-testable:** yes.
 
 **Target thresholds (for acceptance tests, not hard SLOs):**
+
 - Silent-preference fixture ("just build me a schedule") — `archetypeDistance ≥ 0.25`.
-  Today's value on the fixture is likely <0.1 (three near-identical schedules).
+Today's value on the fixture is likely <0.1 (three near-identical schedules).
 - Preference-constrained fixtures — no target; the metric is informational, not a
-  requirement.
+requirement.
 
 ---
 
@@ -116,6 +125,7 @@ archetypeDistance = mean over pairs of  mean over j in 0..4 of  |V_i_norm[j] - V
 Does this schedule respect the degree's structural rules?
 
 **Inputs:**
+
 - `schedule.courses[]` with `{subject, courseNumber}`.
 - `graph: RequirementGraph` (see `requirement-graph-rfc.md`).
 
@@ -157,6 +167,7 @@ Did the user's stated soft preferences actually change what they got? I.e. is th
 scorer doing its job?
 
 **Inputs:**
+
 - `run.topSchedules[]` — the 3 returned schedules with their `scoreBreakdown`.
 - `run.allScored[]` — the top-K (K=20 for Phase 0) candidates with breakdowns.
 - `run.preferences` — stated preferences from `intent.statedPreferences`.
@@ -181,8 +192,7 @@ penaltyEffectiveness = (diff.size > 0) ? 1 : 0
 
 **Range:** `{0, 1}`.
 
-**When undefined:** no stated soft preferences (`preferences.morningCutoffWeight ==
-null && preferences.lateCutoffWeight == null && ...`). In that case `null`.
+**When undefined:** no stated soft preferences (`preferences.morningCutoffWeight == null && preferences.lateCutoffWeight == null && ...`). In that case `null`.
 
 **Unit-testable:** yes, given `applyVector` is already pure.
 
@@ -197,13 +207,15 @@ measure of scorer correctness we have.
 
 These metrics are what determines whether each phase is "done":
 
-| Phase | Gate |
-|---|---|
-| 0 (instrumentation) | All four metrics computable and exposed on every schedule run. Unit tests present. |
-| 1 (requirement graph) | `requirementGraphValidity === 1` for every returned schedule on the fixtures. No regression in `honoredRate` on the other fixtures. |
-| 2 (scorer fidelity) | `penaltyEffectiveness === 1` on a new "prefer afternoons with afternoon alternatives" fixture. `honoredRate` improvement on morning / online fixtures. |
-| 3 (archetype ranking) | `archetypeDistance ≥ 0.25` on the silent-preference fixture. No regression on others. |
-| Bug 4 | Eligible count on English-CW fixture rises from today's value (measured in Phase 0) to ≥ ~150 per term. (Specific threshold TBD after we measure the baseline.) |
+
+| Phase                 | Gate                                                                                                                                                            |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0 (instrumentation)   | All four metrics computable and exposed on every schedule run. Unit tests present.                                                                              |
+| 1 (requirement graph) | `requirementGraphValidity === 1` for every returned schedule on the fixtures. No regression in `honoredRate` on the other fixtures.                             |
+| 2 (scorer fidelity)   | `penaltyEffectiveness === 1` on a new "prefer afternoons with afternoon alternatives" fixture. `honoredRate` improvement on morning / online fixtures.          |
+| 3 (archetype ranking) | `archetypeDistance ≥ 0.25` on the silent-preference fixture. No regression on others.                                                                           |
+| Bug 4                 | Eligible count on English-CW fixture rises from today's value (measured in Phase 0) to ≥ ~150 per term. (Specific threshold TBD after we measure the baseline.) |
+
 
 ---
 
@@ -216,7 +228,7 @@ payload and from unit tests:
 - `BP.computeArchetypeVector(scheduleAction)` — reads `courses[]`.
 - `BP.computeArchetypeDistance(scheduleActions)` — takes an array.
 - `BP.computePenaltyEffectiveness(rankBreakdown, preferences, vector)` — uses the new
-  Phase 0 `rankBreakdown` payload.
+Phase 0 `rankBreakdown` payload.
 - `BP.computeRequirementGraphValidity` — stub in Phase 0, real in Phase 1.
 
 All are pure functions with no OpenAI dependency.

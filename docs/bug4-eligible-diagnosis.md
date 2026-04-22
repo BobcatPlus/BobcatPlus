@@ -1,8 +1,19 @@
 # Bug 4 — Eligible Courses Diagnosis
 
-Status: **root cause confirmed**, fix not yet applied.
+Status: **Layers A + B + C shipped on `LLM-algorithm`, pending live verification.**
+Layer D (attribute wildcards) and Layer E (many-to-many course→rule mapping)
+remain deferred. Layer A shipped in `0cbceb6` (concrete `hideFromAdvice`
+fallbacks + wildcard/except instrumentation). Layer B + C landed with the
+commit that paired the DegreeWorks `/api/course-link` fetcher
+(`fetchCourseLinkFromDW` in `background.js`) with the pure orchestrator
+`BPReq.expandAuditWildcards`; the `except`-subtraction behavior of Layer C
+is piped through the orchestrator's `exceptOptions → excludeKeys`
+argument, so the two layers ship as one wire. See D18 in `docs/decisions.md`
+for the architectural split and the deferred sections-in-response
+optimization. Original diagnosis preserved below as the historical record.
 
 Fixtures used:
+
 - `tests/fixtures/audits/audit-english-ba.json` (Greer, English-CW BA, Spring 2026 catalog)
 - `tests/fixtures/banner/{cs,math,music}-fall2026.json` (subject-wide section dumps)
 - Screenshot of live CS BS eligible list for student "george demo" / Aidan (10 courses surfaced)
@@ -30,11 +41,11 @@ if (course.hideFromAdvice === "Yes") continue;
 
 DegreeWorks encodes large swaths of the degree plan with `@` wildcards:
 
-- **`{discipline: "X", number: "@"}`** — any course in subject X. Used for science/elective
-  requirements and subject-scoped advanced work (e.g. `CS 4@` for "any 4000-level CS").
-- **`{discipline: "@", number: "@", withArray: [...]}`** — any course matching a
-  Banner attribute filter. Used heavily for core curriculum (Math core = attribute `020`,
-  etc.).
+- `**{discipline: "X", number: "@"}**` — any course in subject X. Used for science/elective
+requirements and subject-scoped advanced work (e.g. `CS 4@` for "any 4000-level CS").
+- `**{discipline: "@", number: "@", withArray: [...]}**` — any course matching a
+Banner attribute filter. Used heavily for core curriculum (Math core = attribute `020`,
+etc.).
 
 Concrete audit evidence — **BA Science Requirement** (`audit-english-ba.json` L3791–L3852):
 
@@ -116,16 +127,18 @@ Recommendation: keep the `hideFromAdvice` drop only for top-level rule labels, n
 
 English-CW student — rough projected eligibility delta **after fix**, on a typical Fall term:
 
-| Requirement | Today surfaces | After wildcard/except fix | Delta |
-|---|---|---|---|
-| BA Science (1 of many) | 3 specific courses | ~50–80 across 6 subjects, minus `except` | +50-80 |
-| Core Math (020) | 0 | ~10–15 attribute-020 Math courses | +10-15 |
-| Core Language/Phil/Culture | 3 specific | ~25–40 attribute-040 | +25-40 |
-| Core Social & Behavioral | ~6 specific | ~30 attribute-080 | +25 |
-| All other wildcard-bearing rules | — | — | likely 50+ |
+
+| Requirement                      | Today surfaces     | After wildcard/except fix                | Delta      |
+| -------------------------------- | ------------------ | ---------------------------------------- | ---------- |
+| BA Science (1 of many)           | 3 specific courses | ~50–80 across 6 subjects, minus `except` | +50-80     |
+| Core Math (020)                  | 0                  | ~10–15 attribute-020 Math courses        | +10-15     |
+| Core Language/Phil/Culture       | 3 specific         | ~25–40 attribute-040                     | +25-40     |
+| Core Social & Behavioral         | ~6 specific        | ~30 attribute-080                        | +25        |
+| All other wildcard-bearing rules | —                  | —                                        | likely 50+ |
+
 
 Order-of-magnitude, the eligible list for this student should grow from the current
-~10–20 to **~150–250** candidate courses. The CS BS case is almost certainly worse
+~~10–20 to **~~150–250** candidate courses. The CS BS case is almost certainly worse
 because CS major electives are typically `CS 3@ / CS 4@` wildcards.
 
 ---
@@ -150,10 +163,10 @@ full subject lists (180 CS courses / 436 MATH / 279 MU).
 Two sub-considerations:
 
 1. **Pagination**: current `searchCourse` posts `pageMaxSize: 50`. 180+ sections per
-   subject means we must loop until `totalCount` is exhausted. Add a `searchSubject(subject, term)`
+  subject means we must loop until `totalCount` is exhausted. Add a `searchSubject(subject, term)`
    wrapper that paginates.
 2. **Caching**: this produces much larger payloads than single-course searches. Cache
-   key `subject|${term}|${subject}` with the same 1h TTL as `course|...`. Approx
+  key `subject|${term}|${subject}` with the same 1h TTL as `course|...`. Approx
    200 KB–2 MB per subject per term. Cheaper than per-course on repeated parser runs.
 
 Cost: ~80–120 LOC in `background.js`. Low risk — the endpoint and session-lock pattern
@@ -176,13 +189,13 @@ for every dump). So we cannot resolve attribute wildcards from the existing endp
 Two pragmatic options:
 
 - **D1 (cheap):** ignore pure-attribute wildcards; rely on the `hideFromAdvice: "Yes"`
-  concrete sibling entries that DegreeWorks already lists alongside them (Layer A has
-  recovered these). For most core rules, the audit already lists the commonly-taken
-  concrete courses. Ship with this behavior; accept that exotic attribute matches are
-  missed.
+concrete sibling entries that DegreeWorks already lists alongside them (Layer A has
+recovered these). For most core rules, the audit already lists the commonly-taken
+concrete courses. Ship with this behavior; accept that exotic attribute matches are
+missed.
 - **D2 (full):** add a second Banner fetch per section (or a bulk
-  `classSearchResults`-style call) that returns attributes. Costly in requests. Only
-  worth it if D1 proves inadequate in testing.
+`classSearchResults`-style call) that returns attributes. Costly in requests. Only
+worth it if D1 proves inadequate in testing.
 
 Recommendation: Layer D = D1 for the first milestone. Revisit D2 post-Phase 2 if we see
 symptoms.
@@ -190,12 +203,13 @@ symptoms.
 ### Layer E (deferred, independent): many-to-many course → rule mapping
 
 Preserve the full list of rules a course satisfies. Useful for:
+
 - UX: show "this course satisfies X (major) AND Y (minor)"
 - Solver ranking: prefer courses that knock out multiple rules
 - Advisor summary: coherent reasoning about requirement overlap
 
 Implementation: swap the `needed.some(... already ...)` dedupe for a
-`Map<courseKey, {course, rules: Set<rule>}>`. Every downstream consumer treats a course
+`Map<courseKey, {course, rules: Set<rule>}>`. Every downstream consumer treats a course  
 as the union of its rule memberships.
 
 Cost: ~30 LOC in parser + adjustments in `scheduleGenerator.js` wherever
@@ -209,13 +223,13 @@ Write a pure parser-only test (no Banner, no LLM):
 
 1. Feed `audits/audit-english-ba.json` through the new parser.
 2. Assert every wildcard entry yields the correct placeholder (`{subject, wildcard: true,
-   except: [...]}` or `{subject, attribute: "020"}`).
+  except: [...]}`or`{subject, attribute: "020"}`).
 3. Feed the 3 Banner subject dumps as a mock `searchSubject` source.
 4. Assert the resulting eligible pool contains ≥ 1 BIO, ≥ 1 CHEM, ≥ 1 PHYS course for
-   the BA Science Requirement.
+  the BA Science Requirement.
 5. Assert MATH 1300 and MATH 1311 are **not** in the BA Science pool (`except` honored).
 6. Assert every concrete `hideFromAdvice: "Yes"` course from the Math core rule is in the
-   Math core pool.
+  Math core pool.
 
 None of this requires an OpenAI key. Wire into `tests/` and block merge on the suite.
 
@@ -224,13 +238,13 @@ None of this requires an OpenAI key. Wire into `tests/` and block merge on the s
 ## Open questions for the user
 
 1. **Does the existing `searchCourse` handle `txt_courseNumber=""` correctly today?** The
-   evidence from `tests/fixtures/banner/*.json` suggests yes (the dumps were produced by
+  evidence from `tests/fixtures/banner/*.json` suggests yes (the dumps were produced by
    similar subject-wide searches). A one-off spot-check from a logged-in session would
    confirm.
 2. **Is there a known Banner endpoint that returns course attributes?** If so, Layer D2
-   becomes viable sooner. If not, D1 ships first and attributes wait.
+  becomes viable sooner. If not, D1 ships first and attributes wait.
 3. **CS audit JSON** — still missing. Needed to verify CS 3@/4@ wildcard case as part of
-   acceptance tests.
+  acceptance tests.
 
 ---
 
@@ -239,11 +253,11 @@ None of this requires an OpenAI key. Wire into `tests/` and block merge on the s
 New fixtures landed:
 
 - `tests/fixtures/audits/audit-computerscience-bs-minor-music.json` — the correct CS BS
-  audit (the earlier file was a duplicate of English). Md5-verified distinct.
+audit (the earlier file was a duplicate of English). Md5-verified distinct.
 - `tests/fixtures/wildcard/cs-4@.json` — raw DegreeWorks `courseInformation` response
-  when a user clicks the `4@` entry under CS Advanced Electives.
+when a user clicks the `4@` entry under CS Advanced Electives.
 - `tests/fixtures/banner/english-fall2026.json` — subject-wide Banner dump for English
-  Fall 2026 (1.6 MB).
+Fall 2026 (1.6 MB).
 
 Key shift: the `cs-4@.json` fixture reveals a DegreeWorks endpoint that changes the fix
 architecture.
@@ -292,51 +306,72 @@ the `4@` range) and **no attributes**.
 What this changes:
 
 - **Layer B becomes smaller.** Instead of building a subject-wide pagination loop in
-  `background.js`, we hit `courseInformation(discipline, number, term)` per wildcard and
-  get exactly the candidate set the audit was asking about. Lower latency, smaller
-  payload, scoped filtering, and no client-side regex for "is this `4xxx`".
+`background.js`, we hit `courseInformation(discipline, number, term)` per wildcard and
+get exactly the candidate set the audit was asking about. Lower latency, smaller
+payload, scoped filtering, and no client-side regex for "is this `4xxx`".
 - **Layer D (attribute wildcards) is viable now.** The attributes we thought Banner
-  couldn't give us are right there in the response. The `@ @ with ATTRIBUTE=020`
-  pattern for Math core can likely be resolved by calling
-  `courseInformation("@", "@", term)` with the attribute filter — still TBD exactly how
-  DegreeWorks parametrizes that (the fixture only covers the `subject + number`-wildcard
-  case), but the attribute data path exists. Worst case D1 remains the fallback.
+couldn't give us are right there in the response. The `@ @ with ATTRIBUTE=020`
+pattern for Math core can likely be resolved by calling
+`courseInformation("@", "@", term)` with the attribute filter — still TBD exactly how
+DegreeWorks parametrizes that (the fixture only covers the `subject + number`-wildcard
+case), but the attribute data path exists. Worst case D1 remains the fallback.
 - **Sections-in-response removes a second call path.** Today `background.js` calls
-  Banner for each wildcard-expanded course; with `courseInformation` that's free. We'll
-  still need Banner for user-entered concrete course searches, but the bulk-resolution
-  case for audits moves off it.
+Banner for each wildcard-expanded course; with `courseInformation` that's free. We'll
+still need Banner for user-entered concrete course searches, but the bulk-resolution
+case for audits moves off it.
 
 ### Revised fix strategy
 
-| Layer | Scope | Status |
-|---|---|---|
-| A — stop dropping `hideFromAdvice` concrete courses | parser-only | unchanged from before; ship first |
-| B — wildcard expansion via `courseInformation` | parser + one new `background.js` fetcher | **simpler than originally designed** |
-| C — honor `except` clauses (including wildcard exceptions like `CS 2@`) | parser-only | expanded scope: `except` can contain wildcards (confirmed in CS fixture) |
-| D — attribute wildcards | new fetcher variant | optional; investigate after B ships |
-| E — many-to-many course→rule mapping | parser + downstream | unchanged, still deferred |
 
-Layer C grew: the CS Advanced Electives `except` field includes `{discipline: "CS",
-number: "2@"}`, i.e. an exception that is itself a wildcard. The subtraction step has to
+| Layer                                                                   | Scope                                    | Status                                                                                                                                                                                                                                                                                                                     |
+| ----------------------------------------------------------------------- | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A — stop dropping `hideFromAdvice` concrete courses                     | parser-only                              | ✅ **shipped** in `0cbceb6`                                                                                                                                                                                                                                                                                                 |
+| B — wildcard expansion via `courseInformation` (now `/api/course-link`) | parser + one new `background.js` fetcher | ✅ **shipped on `LLM-algorithm`** — `fetchCourseLinkFromDW` (HTTP + 1h chrome.storage cache) + `BPReq.expandAuditWildcards` (pure orchestrator); wired between `getAuditData` and section search in `runAnalysis`. Pending live verification.                                                                               |
+| C — honor `except` clauses (including wildcard exceptions like `CS 2@`) | parser-only                              | ✅ **shipped on `LLM-algorithm`** for concrete excepts (piped through the orchestrator's `excludeKeys`). Wildcard-valued excepts (e.g. `CS 2@` as an except) still fall through; no-op in practice on the CS 4@ case because 2xxx is outside the expansion range. Follow-up if a real audit surfaces a conflicting overlap. |
+| D — attribute wildcards                                                 | new fetcher variant                      | deferred; `@@ with ATTRIBUTE=xxx` is skipped gracefully by the orchestrator (`result.skipped[]` with `reason: "Layer D"`) so the Math core path relies on `hideFromAdvice` concrete siblings from Layer A.                                                                                                                 |
+| E — many-to-many course→rule mapping                                    | parser + downstream                      | unchanged, still deferred                                                                                                                                                                                                                                                                                                  |
+
+
+### Not shipped with B/C: sections-in-response optimization
+
+The `courseInformation` payload includes Banner-shaped sections inline
+(per the 2026-04-21 update above). This would let us skip the per-course
+Banner `searchCourse` call for every wildcard-expanded entry. We didn't
+take it in this ship because:
+
+- The section shape parity between DW's inline sections and Banner's
+`searchResults` data isn't verified; downstream scheduler code has
+hard assumptions about Banner-specific fields (exact meeting-time
+encoding, enrollment caps, seat-remaining logic).
+- Keeping the section-search path uniform across concrete and
+wildcard-sourced entries means a single source of truth for
+"offered this term / seats / meeting times".
+- The optimization is latency-only; correctness is the blocker for
+Bug 4 and Layer B solves that.
+
+Deferred to a future phase; acceptance criteria item #10 from the
+2026-04-21 update remains open with that caveat.
+
+Layer C grew: the CS Advanced Electives `except` field includes `{discipline: "CS", number: "2@"}`, i.e. an exception that is itself a wildcard. The subtraction step has to
 expand both sides via `courseInformation` before diffing.
 
 ### Acceptance criteria — additions
 
 In addition to the existing criteria (parser-level assertions on the English audit):
 
-7. Feed `audit-computerscience-bs-minor-music.json` through the parser.
-8. Assert the `CS Advanced Electives` node has:
-   - `take.credits.min = 12`.
-   - Two wildcard options: `CS 3@` and `CS 4@`.
-   - `exceptOptions` containing `CS 2@`, `CS 3354`, `CS 3358`, `CS 3339`, `CS 3360`,
-     `CS 3398`, `CS 4371` (wildcard + 6 concrete).
-9. Resolve `CS 4@` via a mock of `courseInformation` that replays
-   `tests/fixtures/wildcard/cs-4@.json`. Assert the expanded candidate set is 31
+1. Feed `audit-computerscience-bs-minor-music.json` through the parser.
+2. Assert the `CS Advanced Electives` node has:
+  - `take.credits.min = 12`.
+  - Two wildcard options: `CS 3@` and `CS 4@`.
+  - `exceptOptions` containing `CS 2@`, `CS 3354`, `CS 3358`, `CS 3339`, `CS 3360`,
+  `CS 3398`, `CS 4371` (wildcard + 6 concrete).
+3. Resolve `CS 4@` via a mock of `courseInformation` that replays
+  `tests/fixtures/wildcard/cs-4@.json`. Assert the expanded candidate set is 31
    courses before `except` subtraction, drops to 30 after removing `CS 4371`, and is
    further reduced by `CS 2@` expansion (no effect here since 2xxx is outside 4@'s
    range, but the subtraction must run cleanly).
-10. Assert every returned course has a non-empty `attributes[]` and `sections[]`
-    array on the hydrated candidate, so downstream code can rely on them without
+4. Assert every returned course has a non-empty `attributes[]` and `sections[]`
+  array on the hydrated candidate, so downstream code can rely on them without
     extra Banner calls.
 
 ### Action items unchanged

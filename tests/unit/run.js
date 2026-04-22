@@ -22,72 +22,84 @@ const testFiles = fs
   .filter((f) => f.endsWith(".test.js"))
   .sort();
 
-let passed = 0;
-let failed = 0;
-let expectedFail = 0;
-let unexpectedPass = 0;
-const failures = [];
-const surprises = [];
+// Test cases may be sync or async — if `run()` returns a promise we await
+// it; otherwise we treat the synchronous return (or throw) as the result.
+// Keeping both forms lets us keep the existing pure-sync tests unchanged
+// while supporting orchestrators that need an injected async fetcher.
+async function main() {
+  let passed = 0;
+  let failed = 0;
+  let expectedFail = 0;
+  let unexpectedPass = 0;
+  const failures = [];
+  const surprises = [];
 
-for (const file of testFiles) {
-  process.stdout.write(`\n▸ ${file}\n`);
-  let mod;
-  try {
-    mod = require(path.join(UNIT_DIR, file));
-  } catch (e) {
-    failed++;
-    failures.push({ file, name: "(require)", err: e });
-    process.stdout.write(`  ✗ failed to load: ${e.message}\n`);
-    continue;
-  }
-  if (!Array.isArray(mod.cases)) {
-    process.stdout.write(`  (skipped — no cases[])\n`);
-    continue;
-  }
-  for (const c of mod.cases) {
-    let threw = null;
+  for (const file of testFiles) {
+    process.stdout.write(`\n▸ ${file}\n`);
+    let mod;
     try {
-      c.run();
+      mod = require(path.join(UNIT_DIR, file));
     } catch (e) {
-      threw = e;
-    }
-    if (c.expectedToFail) {
-      if (threw) {
-        expectedFail++;
-        process.stdout.write(`  ☐ (known failure) ${c.name}\n    · ${threw.message}\n`);
-      } else {
-        // Known-failure test passed unexpectedly. Flag so we remove the flag.
-        unexpectedPass++;
-        surprises.push({ file, name: c.name });
-        process.stdout.write(`  ! (UNEXPECTEDLY PASSED — remove expectedToFail) ${c.name}\n`);
-      }
+      failed++;
+      failures.push({ file, name: "(require)", err: e });
+      process.stdout.write(`  ✗ failed to load: ${e.message}\n`);
       continue;
     }
-    if (threw) {
-      failed++;
-      failures.push({ file, name: c.name, err: threw });
-      process.stdout.write(`  ✗ ${c.name}\n    · ${threw.message}\n`);
-    } else {
-      passed++;
-      process.stdout.write(`  ✓ ${c.name}\n`);
+    if (!Array.isArray(mod.cases)) {
+      process.stdout.write(`  (skipped — no cases[])\n`);
+      continue;
+    }
+    for (const c of mod.cases) {
+      let threw = null;
+      try {
+        const ret = c.run();
+        if (ret && typeof ret.then === "function") await ret;
+      } catch (e) {
+        threw = e;
+      }
+      if (c.expectedToFail) {
+        if (threw) {
+          expectedFail++;
+          process.stdout.write(`  ☐ (known failure) ${c.name}\n    · ${threw.message}\n`);
+        } else {
+          // Known-failure test passed unexpectedly. Flag so we remove the flag.
+          unexpectedPass++;
+          surprises.push({ file, name: c.name });
+          process.stdout.write(`  ! (UNEXPECTEDLY PASSED — remove expectedToFail) ${c.name}\n`);
+        }
+        continue;
+      }
+      if (threw) {
+        failed++;
+        failures.push({ file, name: c.name, err: threw });
+        process.stdout.write(`  ✗ ${c.name}\n    · ${threw.message}\n`);
+      } else {
+        passed++;
+        process.stdout.write(`  ✓ ${c.name}\n`);
+      }
     }
   }
-}
 
-console.log("\n" + "─".repeat(60));
-console.log(
-  `Unit tests: ${passed} passed · ${failed} failed · ${expectedFail} known-failures · ${unexpectedPass} surprises`,
-);
+  console.log("\n" + "─".repeat(60));
+  console.log(
+    `Unit tests: ${passed} passed · ${failed} failed · ${expectedFail} known-failures · ${unexpectedPass} surprises`,
+  );
 
-if (failures.length) {
-  console.log("\nFailures:");
-  for (const f of failures) {
-    console.log(`  • ${f.file} — ${f.name}: ${f.err.message}`);
+  if (failures.length) {
+    console.log("\nFailures:");
+    for (const f of failures) {
+      console.log(`  • ${f.file} — ${f.name}: ${f.err.message}`);
+    }
   }
-}
-if (surprises.length) {
-  console.log("\nUnexpected passes (remove `expectedToFail`):");
-  for (const s of surprises) console.log(`  • ${s.file} — ${s.name}`);
+  if (surprises.length) {
+    console.log("\nUnexpected passes (remove `expectedToFail`):");
+    for (const s of surprises) console.log(`  • ${s.file} — ${s.name}`);
+  }
+
+  process.exit(failed + unexpectedPass > 0 ? 1 : 0);
 }
 
-process.exit(failed + unexpectedPass > 0 ? 1 : 0);
+main().catch((e) => {
+  console.error("Test runner crashed:", e);
+  process.exit(1);
+});

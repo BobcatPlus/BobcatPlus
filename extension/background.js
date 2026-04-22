@@ -11,11 +11,73 @@ try {
     "requirements/graph.js",
     "requirements/txstFromAudit.js",
     "requirements/wildcardExpansion.js",
+    "performance/concurrencyPool.js",
   );
 } catch (e) {
   // Never throw on module load — getAuditData falls back to legacy when
-  // BPReq is missing, and D13's postmortem-in-advance calls out this path.
-  console.warn("[BobcatPlus] RequirementGraph modules failed to load:", e);
+  // BPReq is missing (D13), and the BPPerf inline fallbacks below keep
+  // the analysis bounded even if `performance/concurrencyPool.js` is
+  // unreachable (path mismatch, stale service worker, etc). We log
+  // loudly because a silent fallback previously reintroduced the prereq
+  // hang bug (Bug 4 / "4-minute prereq wait" postmortem).
+  console.error(
+    "[BobcatPlus] importScripts failed — BPReq and/or BPPerf may be unavailable." +
+      " Extension will run with inline fallbacks. Error:",
+    e,
+  );
+}
+
+// BPPerf guardrails — canonical implementations live in
+// `performance/concurrencyPool.js` (where they're unit-tested), but the
+// same logic is duplicated inline here so a failed module load does NOT
+// revert to the pre-fix unbounded Promise.all + no-timeout behavior. If
+// the module loaded cleanly these assignments are no-ops because `api`
+// already attached mapPool/fetchWithTimeout to globalThis.BPPerf.
+if (!self.BPPerf) self.BPPerf = {};
+if (typeof self.BPPerf.mapPool !== "function") {
+  console.warn(
+    "[BobcatPlus] BPPerf.mapPool missing — using inline fallback. Check that " +
+      "extension/performance/concurrencyPool.js is present and importScripts succeeded.",
+  );
+  self.BPPerf.mapPool = async function mapPoolInline(items, limit, mapper) {
+    if (!Array.isArray(items)) throw new TypeError("mapPool: items must be an array");
+    const n = items.length;
+    const results = new Array(n);
+    if (n === 0) return results;
+    const cap = Math.max(1, Math.min(n, limit | 0));
+    let cursor = 0;
+    const workers = [];
+    for (let w = 0; w < cap; w++) {
+      workers.push(
+        (async () => {
+          while (true) {
+            const i = cursor++;
+            if (i >= n) return;
+            results[i] = await mapper(items[i], i);
+          }
+        })(),
+      );
+    }
+    await Promise.all(workers);
+    return results;
+  };
+}
+if (typeof self.BPPerf.fetchWithTimeout !== "function") {
+  console.warn(
+    "[BobcatPlus] BPPerf.fetchWithTimeout missing — using inline fallback.",
+  );
+  self.BPPerf.fetchWithTimeout = async function fetchWithTimeoutInline(url, options, timeoutMs) {
+    const ms = typeof timeoutMs === "number" && timeoutMs > 0 ? timeoutMs : 12000;
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      try { controller.abort(); } catch (e) { /* already aborted */ }
+    }, ms);
+    try {
+      return await fetch(url, { ...(options || {}), signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  };
 }
 
 const GRADE_MAP = { A: 4, B: 3, C: 2, D: 1, F: 0, CR: 4 };
@@ -1182,6 +1244,81 @@ function computeAuditParity(legacy, derived) {
   };
 }
 
+// --- Step 2.5: Expand wildcard requirement entries via DegreeWorks ---
+//
+// Bug 4 Layer B. RequirementGraph surfaces wildcards (`CS 4@`, `MATH @`,
+// etc.) alongside concrete entries, but until now we had no way to turn
+// them into actual course picks — they were silently dropped so the
+// eligible pool was missing every subject-wildcard requirement (major
+// electives, BA science, etc.).
+//
+// This fetcher hits DegreeWorks' `/api/course-link` endpoint (response
+// wrapped in a `courseInformation` envelope, hence the legacy module
+// naming). URL captured from a live DevTools trace on the CS BS audit:
+//
+//   GET https://dw-prod.ec.txstate.edu/responsiveDashboard/api/course-link
+//       ?discipline={SUBJECT}&number={NUMBER_PATTERN}
+//
+// Session cookie via `credentials: "include"`; no body, no CSRF token.
+// Works from the extension background because `dw-prod.ec.txstate.edu`
+// is in manifest.host_permissions. Cached for 1h in chrome.storage.local
+// (matches the `course` TTL — wildcard expansions are basically stable
+// over a single browsing session and we'd rather eat a stale cache than
+// hammer DW on every audit reload).
+//
+// The pure orchestrator that consumes this — dedup, except subtraction,
+// termCode filtering — lives in `requirements/wildcardExpansion.js` as
+// `BPReq.expandAuditWildcards`. Split intentional: this function is the
+// ONLY piece that touches the network + chrome.storage, so it stays
+// testable via a mocked fetcher in Node (see
+// `tests/unit/wildcardExpansion.test.js`).
+async function fetchCourseLinkFromDW(subject, numberPattern) {
+  if (!subject || !numberPattern) return null;
+  const key = `courseLink|${subject}|${numberPattern}`;
+  const cached = await cacheGet(key, CACHE_TTL.courseInfo);
+  if (cached) return cached;
+
+  const url =
+    "https://dw-prod.ec.txstate.edu/responsiveDashboard/api/course-link" +
+    "?discipline=" + encodeURIComponent(subject) +
+    "&number=" + encodeURIComponent(numberPattern);
+
+  try {
+    const response = await fetch(url, { credentials: "include" });
+    if (!response.ok) {
+      console.warn(
+        "[BobcatPlus] course-link HTTP " + response.status + " for " +
+          subject + " " + numberPattern,
+      );
+      return null;
+    }
+    const raw = await response.json();
+    // Guard against DW occasionally serving an HTML error page with a
+    // 200 status; refuse to cache anything that isn't the expected
+    // envelope so the hour-long TTL doesn't lock us into a bad payload.
+    const hasCourses =
+      raw &&
+      raw.courseInformation &&
+      Array.isArray(raw.courseInformation.courses);
+    if (!hasCourses) {
+      console.warn(
+        "[BobcatPlus] course-link returned no courseInformation.courses for " +
+          subject + " " + numberPattern,
+      );
+      return null;
+    }
+    await cacheSet(key, raw);
+    return raw;
+  } catch (e) {
+    console.warn(
+      "[BobcatPlus] course-link fetch failed for " + subject + " " +
+        numberPattern + ":",
+      e,
+    );
+    return null;
+  }
+}
+
 const REG_BASE = "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb";
 const PLAN_PAGE_REFERER = REG_BASE + "/ssb/plan/plan";
 const PLAN_ORIGIN = "https://reg-prod.ec.txstate.edu";
@@ -1764,10 +1901,11 @@ function withSessionLock(fn) {
 // TTLs: course sections 1h, prerequisites 24h, descriptions 7d, terms 24h
 // ============================================================
 const CACHE_TTL = {
-  course: 60 * 60 * 1000,           // 1 hour  — seats change but not by the minute
-  prereq: 24 * 60 * 60 * 1000,      // 24 hours — fixed once schedule publishes
-  desc:   7  * 24 * 60 * 60 * 1000, // 7 days  — truly static
-  terms:  24 * 60 * 60 * 1000,      // 24 hours
+  course:     60 * 60 * 1000,           // 1 hour  — seats change but not by the minute
+  prereq:     24 * 60 * 60 * 1000,      // 24 hours — fixed once schedule publishes
+  desc:       7  * 24 * 60 * 60 * 1000, // 7 days  — truly static
+  terms:      24 * 60 * 60 * 1000,      // 24 hours
+  courseInfo: 60 * 60 * 1000,           // 1 hour  — DW wildcard expansion (same cadence as `course`)
 };
 
 async function cacheGet(key, ttl) {
@@ -1793,6 +1931,183 @@ async function cacheAge(key, ttl) {
     if (entry && Date.now() - entry.ts < ttl) return entry.ts;
   } catch (e) {}
   return null;
+}
+
+// --- Step 4a: Batch section search — one paginated Banner call per subject.
+//
+// This replaces the per-course call-pattern that used to drive runAnalysis
+// and was the dominant bottleneck (see docs/bug4-eligible-diagnosis.md:
+// "20-25s for 123 courses"). Each single-course searchCourse call does a
+// 3-request handshake (resetDataForm + term/search + searchResults), all
+// serialized behind the withSessionLock queue. Batching by subject collapses
+// N courses across K subjects into a single session handshake plus one
+// paginated searchResults call per subject — typically K≈10-15 vs N≈120.
+//
+// Results are cached under `subjectSearch|${term}|${subject}` with the
+// same 1h TTL as single-course search, and also fan out into the legacy
+// per-course cache key so the `getCourseSections` UI message handler
+// (which still calls the single-course searchCourse path) sees a warm
+// cache after any analysis run.
+async function searchCoursesBySubjects(
+  subjects,
+  term,
+  { forceRefresh = false } = {},
+) {
+  const unique = Array.from(
+    new Set(
+      (Array.isArray(subjects) ? subjects : [])
+        .map((s) => (typeof s === "string" ? s.trim() : ""))
+        .filter(Boolean),
+    ),
+  );
+  const results = new Map();
+  if (unique.length === 0) return results;
+
+  // Cache key version suffix: bump whenever caching semantics change so
+  // previously poisoned entries auto-expire rather than surviving their
+  // 1h TTL. v1→v2: we no longer cache partial/failed subject searches
+  // (see the `gotSuccessfulPage && fullyPaginated` guard below).
+  const SUBJECT_CACHE_VERSION = "v2";
+  const cacheKeyFor = (subject) =>
+    `subjectSearch|${SUBJECT_CACHE_VERSION}|${term}|${subject}`;
+
+  const toFetch = [];
+  let oldestTs = null;
+  for (const subject of unique) {
+    const key = cacheKeyFor(subject);
+    if (!forceRefresh) {
+      const cached = await cacheGet(key, CACHE_TTL.course);
+      // Defense in depth: even within v2, treat an empty cached array as
+      // a miss. If a subject legitimately has zero sections this term
+      // we'll refetch once per analysis (cheap — K subjects, not N
+      // courses), which is the right trade vs silently masking every
+      // course in the subject.
+      if (cached && Array.isArray(cached) && cached.length > 0) {
+        results.set(subject, cached);
+        const ts = await cacheAge(key, CACHE_TTL.course);
+        if (ts && (oldestTs === null || ts < oldestTs)) oldestTs = ts;
+        continue;
+      }
+    }
+    toFetch.push(subject);
+  }
+  if (toFetch.length === 0) {
+    results.__oldestTs = oldestTs;
+    return results;
+  }
+
+  await withSessionLock(async () => {
+    // Single session handshake covers every subject we still need to
+    // fetch. Banner's class-search mode is per-term, not per-subject —
+    // once the term is selected, subsequent searchResults calls with
+    // different `txt_subject` values all reuse the same session.
+    await fetch(
+      "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classSearch/resetDataForm",
+      { method: "POST", credentials: "include" },
+    );
+    await fetch(
+      "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/term/search?mode=search",
+      {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          term: term,
+          studyPath: "",
+          studyPathText: "",
+          startDatepicker: "",
+          endDatepicker: "",
+        }).toString(),
+      },
+    );
+
+    const PAGE_MAX = 500; // Banner caps practical page size; we loop if needed
+    const PAGE_CAP = 20;  // safety valve — no subject has 10k sections
+
+    for (const subject of toFetch) {
+      let pageOffset = 0;
+      const all = [];
+      let pageIdx = 0;
+      // Track whether we ever received a well-formed successful response
+      // for this subject. Without this, a timeout / 500 / malformed body
+      // on the first page causes us to cache an empty array, which would
+      // then mask every course in the subject as "not offered" for the
+      // entire 1h cache TTL — the exact "eligible count keeps dropping
+      // between runs" failure mode.
+      let gotSuccessfulPage = false;
+      let fullyPaginated = false;
+      while (pageIdx < PAGE_CAP) {
+        const form = new FormData();
+        form.append("txt_subject", subject);
+        form.append("txt_term", term);
+        form.append("pageOffset", String(pageOffset));
+        form.append("pageMaxSize", String(PAGE_MAX));
+        form.append("sortColumn", "subjectDescription");
+        form.append("sortDirection", "asc");
+        form.append("startDatepicker", "");
+        form.append("endDatepicker", "");
+        form.append("uniqueSessionId", subject + "-" + Date.now());
+        let result;
+        try {
+          const response = await self.BPPerf.fetchWithTimeout(
+            "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/searchResults/searchResults",
+            { method: "POST", credentials: "include", body: form },
+            20000,
+          );
+          result = await response.json();
+        } catch (e) {
+          console.warn(
+            "[BobcatPlus] batch search failed for subject " +
+              subject +
+              " (page " +
+              pageIdx +
+              "): ",
+            e,
+          );
+          break;
+        }
+        if (!result || !result.success || !Array.isArray(result.data)) break;
+        gotSuccessfulPage = true;
+        all.push(...result.data);
+        const total = Number(result.totalCount);
+        if (!Number.isFinite(total) || all.length >= total) {
+          fullyPaginated = true;
+          break;
+        }
+        pageOffset += PAGE_MAX;
+        pageIdx++;
+      }
+
+      // Expose the current run's best-effort results regardless of cache
+      // policy — `runAnalysis` should still get whatever we managed to
+      // fetch this run.
+      results.set(subject, all);
+
+      // Only write to the 1h cache if we actually got a complete, valid
+      // response. Partial pagination or hard failures stay uncached so
+      // the next analysis re-tries with a fresh session instead of
+      // inheriting a poisoned-empty subject.
+      if (gotSuccessfulPage && fullyPaginated) {
+        const key = cacheKeyFor(subject);
+        await cacheSet(key, all);
+        const ts = await cacheAge(key, CACHE_TTL.course);
+        if (ts && (oldestTs === null || ts < oldestTs)) oldestTs = ts;
+      } else {
+        console.warn(
+          "[BobcatPlus] subject " +
+            subject +
+            " search incomplete (pages=" +
+            (pageIdx + (fullyPaginated ? 1 : 0)) +
+            ", rows=" +
+            all.length +
+            "); not caching so the next run retries fresh",
+        );
+      }
+    }
+  });
+
+  results.__oldestTs = oldestTs;
+  return results;
 }
 
 // --- Step 4: Search for sections of a single course ---
@@ -1898,12 +2213,16 @@ async function checkPrereqs(crn, term, completed, inProgress) {
   const prereqKey = `prereq|${term}|${crn}`;
   let html = await cacheGet(prereqKey, CACHE_TTL.prereq);
   if (!html) {
-    const response = await fetch(
+    // fetchWithTimeout prevents a single stalled socket from wedging the
+    // entire Promise.all-over-needed[] pool (see Bug 4 / "prereq hang"
+    // postmortem in docs/bug4-eligible-diagnosis.md).
+    const response = await self.BPPerf.fetchWithTimeout(
       "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/searchResults/getSectionPrerequisites?term=" +
         term +
         "&courseReferenceNumber=" +
         crn,
       { credentials: "include" },
+      15000,
     );
     html = await response.text();
     await cacheSet(prereqKey, html);
@@ -1942,12 +2261,13 @@ async function getCourseDescription(crn, term) {
   const cached = await cacheGet(descKey, CACHE_TTL.desc);
   if (cached !== null) return cached;
   try {
-    const response = await fetch(
+    const response = await self.BPPerf.fetchWithTimeout(
       "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/searchResults/getCourseDescription?term=" +
         term +
         "&courseReferenceNumber=" +
         crn,
       { credentials: "include" },
+      15000,
     );
     const rawHtml = await response.text();
     const text = rawHtml
@@ -1992,13 +2312,9 @@ async function runAnalysis(sendUpdate, termCodeOverride, isCurrent, { forceRefre
     },
   });
 
-  if (needed.length === 0) {
-    sendUpdate({
-      type: "done",
-      data: { eligible: [], blocked: [], notOffered: [], needed: [] },
-    });
-    return;
-  }
+  // NOTE: the "bail out if needed is empty" check used to live here, but
+  // wildcard expansion (Bug 4 Layer B) can turn an empty concrete pool
+  // into a populated one. Moved below, after expansion runs.
 
   sendUpdate({
     type: "status",
@@ -2018,49 +2334,211 @@ async function runAnalysis(sendUpdate, termCodeOverride, isCurrent, { forceRefre
   }
   sendUpdate({ type: "term", data: term });
 
+  // --- Step 2.5: wildcard expansion (Bug 4 Layer B + C) ---
+  //
+  // RequirementGraph surfaces wildcards separately from concrete
+  // `needed[]` entries. Resolve each one via DegreeWorks' course-link
+  // endpoint and fold the results back into `needed[]` so they flow
+  // through the same section-search → eligibility pipeline as concrete
+  // courses. Layer C (honoring `except`) is free — the orchestrator
+  // passes `exceptionKeysFromWildcard(w)` into the normalizer's
+  // `excludeKeys` option.
+  //
+  // Failure modes degrade gracefully: if the fetcher returns null for a
+  // given wildcard, that requirement just contributes nothing (logged in
+  // the console). We never throw here — eligibility is best-effort.
+  const bpReqExpandReady =
+    typeof self !== "undefined" &&
+    self.BPReq &&
+    typeof self.BPReq.expandAuditWildcards === "function";
+
+  if (bpReqExpandReady && Array.isArray(wildcards) && wildcards.length > 0) {
+    sendUpdate({
+      type: "status",
+      message:
+        "Expanding " +
+        wildcards.length +
+        " wildcard requirement" +
+        (wildcards.length === 1 ? "" : "s") +
+        "...",
+    });
+    try {
+      const expansion = await self.BPReq.expandAuditWildcards(
+        { wildcards, needed, completed, inProgress },
+        { fetchCourseLink: fetchCourseLinkFromDW, termCode: term.code },
+      );
+      if (bail()) return;
+      for (const entry of expansion.added) needed.push(entry);
+
+      if (expansion.failures && expansion.failures.length) {
+        console.warn(
+          "[BobcatPlus] wildcard expansion: " +
+            expansion.failures.length +
+            " of " +
+            wildcards.length +
+            " wildcard(s) failed; those requirements will have no expanded candidates",
+          expansion.failures.slice(0, 10).map((f) => ({
+            label: f.wildcard && f.wildcard.ruleLabel,
+            disc: f.wildcard && f.wildcard.discipline,
+            prefix: f.wildcard && f.wildcard.numberPrefix,
+            error: f.error,
+          })),
+        );
+      }
+      if (expansion.skipped && expansion.skipped.length) {
+        console.info(
+          "[BobcatPlus] wildcard expansion: " +
+            expansion.skipped.length +
+            " attribute-only wildcard(s) skipped (Layer D — hideFromAdvice siblings already in needed)",
+        );
+      }
+
+      sendUpdate({
+        type: "audit",
+        data: {
+          completed: completed.length,
+          inProgress: inProgress.length,
+          needed: needed.length,
+        },
+      });
+    } catch (e) {
+      console.warn(
+        "[BobcatPlus] wildcard expansion threw; continuing with concrete needed[] only:",
+        e,
+      );
+    }
+  }
+
+  if (needed.length === 0) {
+    sendUpdate({
+      type: "done",
+      data: { eligible: [], blocked: [], notOffered: [], needed: [] },
+    });
+    return;
+  }
+
   const eligible = [];
   const blocked = [];
   const notOffered = [];
   let oldestCacheTs = null; // track when course data was last fetched from Banner
 
-  // Search courses sequentially — Banner session state cannot handle parallel searches
-  sendUpdate({ type: "status", message: "Searching " + needed.length + " courses..." });
+  // Batch section search by subject (see searchCoursesBySubjects above).
+  // We group `needed[]` by subject, make one paginated Banner call per
+  // subject, and then index the returned sections back onto each course
+  // entry by "${subject}|${courseNumber}". This collapses O(needed) round
+  // trips to O(distinct subjects), which is the dominant speedup for this
+  // phase.
+  const uniqueSubjects = Array.from(
+    new Set(
+      needed
+        .map((c) => (c && typeof c.subject === "string" ? c.subject.trim() : ""))
+        .filter(Boolean),
+    ),
+  );
+  sendUpdate({
+    type: "status",
+    message:
+      "Searching " +
+      uniqueSubjects.length +
+      " subject" +
+      (uniqueSubjects.length === 1 ? "" : "s") +
+      " (" +
+      needed.length +
+      " course" +
+      (needed.length === 1 ? "" : "s") +
+      ")...",
+  });
+  let subjectSections;
+  try {
+    subjectSections = await searchCoursesBySubjects(
+      uniqueSubjects,
+      term.code,
+      { forceRefresh },
+    );
+  } catch (e) {
+    console.warn(
+      "[BobcatPlus] searchCoursesBySubjects threw; marking all needed as notOffered:",
+      e,
+    );
+    subjectSections = new Map();
+  }
+  if (bail()) return;
+
+  if (subjectSections && subjectSections.__oldestTs) {
+    oldestCacheTs = subjectSections.__oldestTs;
+  }
+
+  // Index returned sections by "SUBJECT|COURSENUMBER" for O(1) lookup.
+  const sectionsIndex = new Map();
+  for (const [, sections] of subjectSections) {
+    if (!Array.isArray(sections)) continue;
+    for (const s of sections) {
+      if (!s) continue;
+      const key = (s.subject || "") + "|" + (s.courseNumber || "");
+      if (!sectionsIndex.has(key)) sectionsIndex.set(key, []);
+      sectionsIndex.get(key).push(s);
+    }
+  }
+
   for (const course of needed) {
     if (bail()) return;
-    try {
-      const cacheKey = `course|${term.code}|${course.subject}|${course.courseNumber}`;
-      const sections = await searchCourse(
-        course.subject,
-        course.courseNumber,
-        term.code,
-        { forceRefresh },
-      );
-      if (bail()) return;
-      // Track oldest cache timestamp so UI can show "last updated X min ago"
-      const ts = await cacheAge(cacheKey, CACHE_TTL.course);
-      if (ts && (oldestCacheTs === null || ts < oldestCacheTs)) oldestCacheTs = ts;
-      if (sections) {
-        course.crn = sections[0].courseReferenceNumber;
-        course.sections = sections;
-      } else {
-        notOffered.push(course);
-      }
-    } catch (e) {
+    const key = (course.subject || "") + "|" + (course.courseNumber || "");
+    const matched = sectionsIndex.get(key);
+    if (matched && matched.length > 0) {
+      course.crn = matched[0].courseReferenceNumber;
+      course.sections = matched;
+      // Backfill the legacy per-course cache so the `getCourseSections`
+      // UI message handler (which still uses single-course searchCourse)
+      // sees a warm cache after an analysis run. Fire-and-forget; cache
+      // write failures are non-fatal.
+      const perCourseKey =
+        `course|${term.code}|${course.subject}|${course.courseNumber}`;
+      cacheSet(perCourseKey, matched).catch(() => {});
+    } else {
       notOffered.push(course);
     }
   }
 
   if (bail()) return;
 
-  // Check prereqs and fetch descriptions in parallel, with description caching
+  // Check prereqs and fetch descriptions with bounded concurrency.
+  //
+  // Previously this fanned out a `Promise.all` over ~120+ courses, which
+  // queued against Chrome's 6-sockets-per-origin cap and could wedge the
+  // entire analysis if any single socket stalled (no per-request timeout).
+  // `mapPool` caps in-flight requests at PREREQ_POOL_CONCURRENCY, and
+  // `checkPrereqs` / `getCourseDescription` both use fetchWithTimeout
+  // internally. Together that makes this phase bounded in both throughput
+  // and worst-case latency. See docs/bug4-eligible-diagnosis.md.
   const coursesWithSections = needed.filter((c) => c.sections);
   const descCache = {};
+  const PREREQ_POOL_CONCURRENCY = 6;
+  const prereqTotal = coursesWithSections.length;
+  let prereqDone = 0;
+  // Throttled status tick-down — every 5 completions or every 400ms, whichever
+  // comes first. Without this the status line sits on "Checking prerequisites
+  // for N courses..." for the whole phase and makes slow runs look hung even
+  // when they're making progress.
+  let lastTickAt = 0;
+  const tickStatus = () => {
+    const now = Date.now();
+    if (prereqDone === prereqTotal || prereqDone % 5 === 0 || now - lastTickAt > 400) {
+      lastTickAt = now;
+      sendUpdate({
+        type: "status",
+        message:
+          "Checking prerequisites " + prereqDone + "/" + prereqTotal + "...",
+      });
+    }
+  };
   sendUpdate({
     type: "status",
-    message: "Checking prerequisites for " + coursesWithSections.length + " courses...",
+    message: "Checking prerequisites 0/" + prereqTotal + "...",
   });
-  await Promise.all(
-    coursesWithSections.map(async (course) => {
+  await self.BPPerf.mapPool(
+    coursesWithSections,
+    PREREQ_POOL_CONCURRENCY,
+    async (course) => {
       if (bail()) return;
       try {
         const result = await checkPrereqs(
@@ -2091,14 +2569,18 @@ async function runAnalysis(sendUpdate, termCodeOverride, isCurrent, { forceRefre
         }
       } catch (e) {
         if (bail()) return;
-        // Prereq check failed (network / parse error) — show the course but flag it
-        // so the UI doesn't silently lie about eligibility.
+        // Prereq check failed (network / timeout / parse error) — show the
+        // course but flag it so the UI doesn't silently lie about
+        // eligibility. AbortError from fetchWithTimeout lands here too.
         console.warn("[BobcatPlus] prereq check failed for", course.subject, course.courseNumber, e);
         course.prereqCheckFailed = true;
         eligible.push(course);
         sendUpdate({ type: "eligible", data: course });
+      } finally {
+        prereqDone++;
+        tickStatus();
       }
-    }),
+    },
   );
 
   if (bail()) return;
