@@ -1,83 +1,42 @@
-//combined old Registration.js and DegreeAudit.js
+// combined old Registration.js and DegreeAudit.js
+//
+// ES-module service worker (manifest.json: background.type = "module").
+// The four side-effect imports below replace the previous importScripts()
+// + inline BPPerf fallback pair. Each imported module is an IIFE that
+// attaches its API to `globalThis` (self.BPReq, self.BPPerf) — valid as
+// an ES module import even without explicit `export` statements.
+//
+// Why no fallback anymore (ref: refactor-on-main commit, pending D-entry
+// in docs/decisions.md):
+//   The previous build kept a duplicate hand-written copy of
+//   BPPerf.mapPool + fetchWithTimeout inline as a "safety net" for
+//   importScripts failure. That copy could drift from the canonical
+//   implementation unnoticed, and a failed deploy would silently use it.
+//   ES-module static imports either all succeed or the service worker
+//   fails to start — there is no partial-load state. If the imports
+//   succeed syntactically, the IIFEs have already attached. The explicit
+//   post-import assertions below convert any "succeeded but didn't
+//   populate" case into a loud startup error instead of a silent regression.
+import "./requirements/graph.js";
+import "./requirements/txstFromAudit.js";
+import "./requirements/wildcardExpansion.js";
+import "./performance/concurrencyPool.js";
 
-// Phase 1 wiring: load the RequirementGraph parser modules so
-// `self.BPReq.buildGraphFromAudit` / `deriveEligible` are available inside
-// the MV3 service worker. Each module dual-exports (module.exports for Node
-// tests, `globalThis.BPReq` for this runtime). RequirementGraph is the
-// source of truth for `needed[]` whenever the modules load; legacy
-// `findNeeded` is a fallback for the (rare) module-load failure case.
-try {
-  importScripts(
-    "requirements/graph.js",
-    "requirements/txstFromAudit.js",
-    "requirements/wildcardExpansion.js",
-    "performance/concurrencyPool.js",
-  );
-} catch (e) {
-  // Never throw on module load — getAuditData falls back to legacy when
-  // BPReq is missing (D13), and the BPPerf inline fallbacks below keep
-  // the analysis bounded even if `performance/concurrencyPool.js` is
-  // unreachable (path mismatch, stale service worker, etc). We log
-  // loudly because a silent fallback previously reintroduced the prereq
-  // hang bug (Bug 4 / "4-minute prereq wait" postmortem).
-  console.error(
-    "[BobcatPlus] importScripts failed — BPReq and/or BPPerf may be unavailable." +
-      " Extension will run with inline fallbacks. Error:",
-    e,
+if (!self.BPReq || typeof self.BPReq.buildGraphFromAudit !== "function") {
+  throw new Error(
+    "[BobcatPlus] extension/requirements/*.js imported but self.BPReq is not populated. " +
+      "Reload the extension and check chrome://extensions for load errors.",
   );
 }
-
-// BPPerf guardrails — canonical implementations live in
-// `performance/concurrencyPool.js` (where they're unit-tested), but the
-// same logic is duplicated inline here so a failed module load does NOT
-// revert to the pre-fix unbounded Promise.all + no-timeout behavior. If
-// the module loaded cleanly these assignments are no-ops because `api`
-// already attached mapPool/fetchWithTimeout to globalThis.BPPerf.
-if (!self.BPPerf) self.BPPerf = {};
-if (typeof self.BPPerf.mapPool !== "function") {
-  console.warn(
-    "[BobcatPlus] BPPerf.mapPool missing — using inline fallback. Check that " +
-      "extension/performance/concurrencyPool.js is present and importScripts succeeded.",
+if (
+  !self.BPPerf ||
+  typeof self.BPPerf.mapPool !== "function" ||
+  typeof self.BPPerf.fetchWithTimeout !== "function"
+) {
+  throw new Error(
+    "[BobcatPlus] extension/performance/concurrencyPool.js imported but self.BPPerf is " +
+      "missing mapPool or fetchWithTimeout. Reload the extension and check chrome://extensions.",
   );
-  self.BPPerf.mapPool = async function mapPoolInline(items, limit, mapper) {
-    if (!Array.isArray(items)) throw new TypeError("mapPool: items must be an array");
-    const n = items.length;
-    const results = new Array(n);
-    if (n === 0) return results;
-    const cap = Math.max(1, Math.min(n, limit | 0));
-    let cursor = 0;
-    const workers = [];
-    for (let w = 0; w < cap; w++) {
-      workers.push(
-        (async () => {
-          while (true) {
-            const i = cursor++;
-            if (i >= n) return;
-            results[i] = await mapper(items[i], i);
-          }
-        })(),
-      );
-    }
-    await Promise.all(workers);
-    return results;
-  };
-}
-if (typeof self.BPPerf.fetchWithTimeout !== "function") {
-  console.warn(
-    "[BobcatPlus] BPPerf.fetchWithTimeout missing — using inline fallback.",
-  );
-  self.BPPerf.fetchWithTimeout = async function fetchWithTimeoutInline(url, options, timeoutMs) {
-    const ms = typeof timeoutMs === "number" && timeoutMs > 0 ? timeoutMs : 12000;
-    const controller = new AbortController();
-    const timer = setTimeout(() => {
-      try { controller.abort(); } catch (e) { /* already aborted */ }
-    }, ms);
-    try {
-      return await fetch(url, { ...(options || {}), signal: controller.signal });
-    } finally {
-      clearTimeout(timer);
-    }
-  };
 }
 
 const GRADE_MAP = { A: 4, B: 3, C: 2, D: 1, F: 0, CR: 4 };
