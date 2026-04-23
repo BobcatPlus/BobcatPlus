@@ -91,7 +91,7 @@ only through message passing.
 | `extension/requirements/graph.js`             | `BPReq.`* primitives                                                    | RequirementGraph node kinds, factories, traversal, invariants.                                                                                                               |
 | `extension/requirements/txstFromAudit.js`     | `BPReq.buildGraphFromAudit`, `BPReq.deriveEligible`                     | TXST DegreeWorks adapter. **Source of truth for `needed[]*`* (per D17). Legacy `findNeeded` is fallback only.                                                                |
 | `extension/requirements/wildcardExpansion.js` | `BPReq.expandAuditWildcards`, `BPReq.normalizeCourseInformationCourses` | Pure orchestrator + normalizer for DW `course-link` responses. Handles `except` subtraction (Bug 4 Layer C).                                                                 |
-| `extension/performance/concurrencyPool.js`    | `BPPerf.mapPool`, `BPPerf.fetchWithTimeout`                             | Bounded concurrency + AbortController-based fetch timeout. Inline fallbacks in `background.js` mirror these so a failed `importScripts` cannot regress to unbounded fan-out. |
+| `extension/performance/concurrencyPool.js`    | `BPPerf.mapPool`, `BPPerf.fetchWithTimeout`                             | Bounded concurrency + AbortController-based fetch timeout. After D20, `background.js` imports these as ES side-effect imports and asserts they populated `self.BPPerf`; no inline fallback exists. |
 
 
 ---
@@ -310,7 +310,7 @@ Milestones merge via PR. Per D17, commit-scoped rollback is the default; feature
 | `background.js` — `runAnalysis` `bail()` checks                      | Removing any `if (bail()) return` lets stale analyses mutate UI after term switch.                                         |
 | `background.js` — prereq / description `mapPool` block               | Reverting to `Promise.all` + raw `fetch` reintroduces the 4-minute prereq hang (A1 fix).                                   |
 | `background.js` — `searchCoursesBySubjects` cache key version (`v2`) | Bump if caching semantics change. Do not silently mutate cached shape under an existing key.                               |
-| `background.js` — inline `BPPerf.`* fallbacks                        | If `performance/concurrencyPool.js` ever fails to load, these keep guardrails on. Do not weaken to the pre-A1 naive shape. |
+| `background.js` — post-import `BPReq` / `BPPerf` assertions          | Per D20, the inline fallback has been deleted. The SW throws on startup if `self.BPReq.buildGraphFromAudit` / `self.BPPerf.mapPool` / `fetchWithTimeout` are not populated after the four side-effect imports. Do not weaken to `console.warn` — a loud startup failure is the whole point. |
 | `tab.js` — `addToWorkingSchedule`                                    | Replaces by CRN AND transfers lock. Keep both behaviors together.                                                          |
 | `scheduleGenerator.js` — affinity cache wipe in `handleUserTurn`     | Without it, prior-turn career keywords silently bias this turn.                                                            |
 | `scheduleGenerator.js` — Jaccard tiered dedup in `pickTop3`          | Don't simplify to section-signature-only dedup; regresses "same courses, different lab".                                   |

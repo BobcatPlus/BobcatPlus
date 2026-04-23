@@ -12,6 +12,53 @@ wins and the RFC must be updated.
 
 ---
 
+## 2026-04-23 — D20: Service worker runs as an ES module; no inline `BPPerf.*` fallback
+
+**Context.** `extension/background.js` previously loaded
+`extension/performance/concurrencyPool.js` + `extension/requirements/*.js`
+via `importScripts()` inside a `try/catch`, and kept a hand-written copy
+of `BPPerf.mapPool` + `BPPerf.fetchWithTimeout` inline (~80 lines) as a
+"fallback" that would silently activate if the import failed. That copy
+could drift from the canonical implementation unnoticed, and a failed
+deploy would quietly run with the duplicate — the exact silent-
+regression mode that reintroduced the prereq hang during Bug 4.
+
+**Decision.**
+
+1. `manifest.json` → `"background": { "type": "module" }`.
+2. `background.js` replaces `importScripts(...)` with static ES
+   side-effect imports of the same four modules
+   (`requirements/graph.js`, `txstFromAudit.js`, `wildcardExpansion.js`,
+   `performance/concurrencyPool.js`).
+3. The inline `BPPerf.*` fallback block is **deleted**.
+4. Post-import assertions throw loudly if `self.BPReq.buildGraphFromAudit`
+   / `self.BPPerf.mapPool` / `self.BPPerf.fetchWithTimeout` are not
+   populated after the imports. The service worker refuses to start
+   rather than run in a partial-load state.
+
+**Rationale.** ES-module static imports are all-or-nothing — if any
+module can't be resolved or parsed, the SW fails to start at a visible
+point (`chrome://extensions` shows the error). That's a stronger contract
+than silent fallback. The inline duplicate could not be unit-tested
+without becoming a second code path that itself needed tests; deleting
+it removes a class of possible regressions (drift between canonical
+and inline impl) that was never actually guarding against a real
+failure mode.
+
+The "Files NOT to touch carelessly" row in `CLAUDE.md` that previously
+warned against weakening the inline fallback is superseded; the new
+contract is the three-line assertion block in `background.js` lines
+25–40.
+
+**Reversible by.** A real MV3 regression where ES-module service workers
+fail to load consistently across a Chrome channel we must support. At
+that point we revert to classic SW + `importScripts`, and re-evaluate
+whether to restore the fallback or accept hard failure.
+
+**Landed.** `refactor-on-main` commit `021e87a`, 2026-04-23.
+
+---
+
 ## 2026-04-22 — D19: Banner login popup opens SP-initiated SSO (`/saml/login`), not `/registration` alone
 
 **Context.** The Chrome login popup (`openLoginPopup` in `extension/background.js`)

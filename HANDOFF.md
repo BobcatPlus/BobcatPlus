@@ -1,5 +1,13 @@
 # Bobcat Plus — AI Scheduler Handoff
 
+> **Refactor in flight (2026-04-23).** Branch `refactor-on-main` is porting
+> the `Refactor` branch's ES-module split onto current `main`. Three
+> commits landed tonight: test safety net (`3b9ccef`, `64c817d`) + SW
+> ES-module flip (`021e87a`). See `docs/refactor-on-main-plan.md` for
+> the full blueprint and paste-ready opener. The LLM-algorithm `main` is
+> otherwise the active trunk; bug fixes continue there until the refactor
+> lands.
+
 Live status for the `LLM-algorithm` branch. Read `CLAUDE.md` first for
 project orientation, invariants, file map, and session-hygiene rules.
 Read `docs/decisions.md` before changing anything load-bearing — if
@@ -188,7 +196,14 @@ diagnosis doc.
 
 ---
 
-## Recent commit history (branch: `LLM-algorithm`)
+## Recent commit history
+
+**Branch `refactor-on-main`** (structural port, in flight):
+- `021e87a` — refactor(sw): service worker flipped to ES module; inline `BPPerf` fallback deleted (D20)
+- `64c817d` — test: affinity cache wipe invariant + seeded `tests/mocks/chrome.js`
+- `3b9ccef` — test: `validateSchedule` (12 cases) + Jaccard course-set dedup regression
+
+**Branch `main`** (trunk after LLM-algorithm merge `6d5c80e`):
 
 - **D19 / Bug 8:** Banner login popup opens `/saml/login`
   (SP-initiated SSO), recovery + DegreeWorks fallback aligned, verify
