@@ -1,4 +1,4 @@
-# Bobcat Plus — [CLAUDE.md](CLAUDE.md)
+# Bobcat Plus — CLAUDE.md (router)
 
 AI-powered schedule planner Chrome extension for Texas State University.
 Scrapes Banner (registration) and DegreeWorks (degree audit); shows remaining
@@ -18,13 +18,14 @@ depth for humans and LLMs.
 | **System shape** (contexts, pipelines, APIs, cache) | [`docs/architecture.md`](docs/architecture.md) |
 | **Load-bearing rules** (mutex, `bail()`, pool/timeout, tests) | [`docs/invariants.md`](docs/invariants.md) |
 | **Where code lives** (`bg/*`, `tab/*`, entrypoints) | [`docs/file-map.md`](docs/file-map.md) |
-| **Open bugs + deferred items** | [`docs/open-bugs.md`](docs/open-bugs.md) |
+| **Open bugs (Jira + in-repo diagnoses)** | [`docs/open-bugs.md`](docs/open-bugs.md) → [`docs/bugs/`](docs/bugs) |
 | **Current sprint / phase / next action** | [`HANDOFF.md`](HANDOFF.md) |
-| **ADR log (tiebreaker)** | [`docs/decisions.md`](docs/decisions.md) — if another doc disagrees, **this wins**. |
+| **ADR log — architecture only (tiebreaker)** | [`docs/decisions.md`](docs/decisions.md) — if another doc disagrees, **this wins**. |
+| **Process / workflow rules** | [`docs/process.md`](docs/process.md) |
 | **How to add docs** | [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) + [`docs/README.md`](docs/README.md) index |
-| **Refactor series (ES module split)** | [`docs/refactor-on-main-plan.md`](docs/refactor-on-main-plan.md) |
-| **Per-bug postmortems** | `docs/bug*-diagnosis.md` |
-| **Phase / feature RFCs** | `docs/*-rfc.md`, `docs/METRICS.md`, `docs/advising-flow.md` |
+| **Plans / RFCs (in-progress design)** | [`docs/plans/`](docs/plans) |
+| **Postmortems (closed bugs + refactors)** | [`docs/postmortems/`](docs/postmortems) |
+| **Metrics** | [`docs/METRICS.md`](docs/METRICS.md) |
 
 ---
 
@@ -60,13 +61,14 @@ Banner session cookie but not a JS heap. See [`docs/architecture.md`](docs/archi
 
 ## Documentation rules (short)
 
-1. **Decisions** → append `docs/decisions.md` (never a new file per decision).
-2. **Bugs** → `docs/bugN-{name}-diagnosis.md`; mark closed when fixed, keep as history.
-3. **Feature design** → `docs/{name}-rfc.md`.
-4. **Module “why”** → top-of-file comment in the module (see `wildcardExpansion.js`).
-5. **Index** — new markdown must appear in `docs/README.md` or this router.
-6. **No** code paraphrase graveyards, **no** end-of-task narrative files in `docs/`.
-7. **AI drafts, humans ratify** — every committed line has a human reviewer.
+1. **Architecture / product decisions** → append `docs/decisions.md` (never a new file per decision).
+2. **Process / workflow rules** → `docs/process.md` (meta only; not ADR).
+3. **Bugs** — status lives in **Jira**. Create `docs/bugs/bugN-{name}.md` only when the bug has a non-obvious failure mode worth writing down. When closed, `git mv` it to `docs/postmortems/`.
+4. **Feature / phase design** → `docs/plans/{name}.md`.
+5. **Module "why"** → top-of-file comment in the module (see `wildcardExpansion.js`).
+6. **Index** — new markdown must appear in `docs/README.md` or this router.
+7. **No** code paraphrase graveyards, **no** end-of-task narrative files in `docs/`.
+8. **AI drafts, humans ratify** — every committed line has a human reviewer.
 
 ---
 
@@ -105,7 +107,7 @@ Keep it ≤8 lines. Receipt for the next contributor, not a report.
 - `main` — stable; ships to the Chrome Web Store.  
 - `Demo` — external demos.  
 - `LLM-algorithm` — active scheduler experiments.  
-- `refactor-on-main` — ES module split of `background` / `tab` (see `docs/refactor-on-main-plan.md`).
+- `refactor-on-main` — ES module split of `background` / `tab` (retrospective at `docs/postmortems/refactor-on-main-split.md`).
 
 Milestones merge via PR. Prefer `git revert` for rollback (D17); feature flags
 only when a phase needs shadow mode, then remove.

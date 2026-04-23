@@ -8,7 +8,7 @@
 //      least a 15s timeout. Chrome caps outbound connections at 6 per
 //      origin; without a timeout a single stalled socket wedges the
 //      entire pool and the eligible-list phase stalls for minutes (the
-//      original "4-minute prereq hang" — see docs/bug4-eligible-diagnosis.md).
+//      original "4-minute prereq hang" — see docs/bugs/bug4-eligible.md).
 //      `self.BPPerf` is populated by the side-effect import of
 //      extension/performance/concurrencyPool.js that background.js runs
 //      at SW boot. Invariants: docs/invariants.md #3.
@@ -78,7 +78,7 @@ export async function checkPrereqs(crn, term, completed, inProgress) {
   if (!html) {
     // fetchWithTimeout prevents a single stalled socket from wedging the
     // entire mapPool fan-out (see Bug 4 / "prereq hang" postmortem in
-    // docs/bug4-eligible-diagnosis.md).
+    // docs/bugs/bug4-eligible.md).
     const response = await self.BPPerf.fetchWithTimeout(
       BANNER_BASE_URL +
         "/searchResults/getSectionPrerequisites?term=" +

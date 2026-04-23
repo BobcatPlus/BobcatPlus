@@ -247,7 +247,7 @@ export async function runAnalysis(sendUpdate, termCodeOverride, isCurrent, { for
   // `mapPool` caps in-flight requests at PREREQ_POOL_CONCURRENCY, and
   // `checkPrereqs` / `getCourseDescription` both use fetchWithTimeout
   // internally. Together that makes this phase bounded in both throughput
-  // and worst-case latency. See docs/bug4-eligible-diagnosis.md.
+  // and worst-case latency. See docs/bugs/bug4-eligible.md.
   const coursesWithSections = needed.filter((c) => c.sections);
   const descCache = {};
   const PREREQ_POOL_CONCURRENCY = 6;

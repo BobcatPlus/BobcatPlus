@@ -3,20 +3,22 @@
 Bobcat Plus is a Chrome extension (Manifest V3) with **two JavaScript
 execution contexts** that must not import each other’s code:
 
-| Context        | Entry                         | Network role |
-| -------------- | ----------------------------- | ------------ |
-| Service worker | `extension/background.js`     | DegreeWorks API, Banner SSB, `chrome.storage.local` (via `bg/cache.js`). |
-| Tab page       | `extension/tab.js` → `tab/*`  | UI; **OpenAI** Chat Completions for the v3 pipeline (`extension/scheduleGenerator.js`, user-supplied key); `chrome.runtime.sendMessage` to the worker only. |
 
-**Hard rule:** never import `tab/*` from `background.js` or vice versa. The
+| Context        | Entry                        | Network role                                                                                                                                                |
+| -------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Service worker | `extension/background.js`    | DegreeWorks API, Banner SSB, `chrome.storage.local` (via `bg/cache.js`).                                                                                    |
+| Tab page       | `extension/tab.js` → `tab/`* | UI; **OpenAI** Chat Completions for the v3 pipeline (`extension/scheduleGenerator.js`, user-supplied key); `chrome.runtime.sendMessage` to the worker only. |
+
+
+**Hard rule:** never import `tab/`* from `background.js` or vice versa. The
 contexts share TXST session cookies in the browser profile but run in
 separate isolates. All cross-context work is message-based.
 
 **Refactor (2026):** `main`+`refactor-on-main` split the former monoliths into
-`extension/bg/*` (service worker) and `extension/tab/*` (page). Entry files
-stay thin: `background.js` (~224 lines) is the `onMessage` router + analysis
-generation counter; `tab.js` (~212 lines) boots the page and handles term
-change. See [`file-map.md`](file-map.md).
+`extension/bg/`* (service worker) and `extension/tab/`* (page). Entry files
+stay thin: `background.js` (~~224 lines) is the `onMessage` router + analysis
+generation counter; `tab.js` (~~212 lines) boots the page and handles term
+change. See `[file-map.md](file-map.md)`.
 
 ---
 
@@ -69,7 +71,7 @@ One entry point: `window.BP.handleUserTurn(...)` in `extension/scheduleGenerator
 
 *Why this shape:* LLM for language; deterministic core for conflicts and
 credits; `validateSchedule()` is defense in depth (if it fails, fix the
-solver). Invariants: [`invariants.md`](invariants.md).
+solver). Invariants: `[invariants.md](invariants.md)`.
 
 ### v3 pipeline (reference diagram)
 
@@ -114,22 +116,24 @@ solver). Invariants: [`invariants.md`](invariants.md).
 
 ## External systems
 
-| System              | Base (typical)                                      | Auth / notes     |
-| ------------------- | --------------------------------------------------- | ---------------- |
-| DegreeWorks         | `https://dw-prod.ec.txstate.edu/responsiveDashboard/api` | TXST session cookie |
-| Banner registration | `https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb` | TXST session cookie |
-| OpenAI              | `https://api.openai.com/v1/chat/completions` (called from `scheduleGenerator.js` in the **tab**) | API key in page context |
-| Rate My Professor   | GraphQL (via `facultyScraper.js`)                   | None (public)    |
 
-`manifest.json` also lists `https://ml3392.app.n8n.cloud/*` — there is **no
+| System              | Base (typical)                                                                                   | Auth / notes            |
+| ------------------- | ------------------------------------------------------------------------------------------------ | ----------------------- |
+| DegreeWorks         | `https://dw-prod.ec.txstate.edu/responsiveDashboard/api`                                         | TXST session cookie     |
+| Banner registration | `https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb`                                     | TXST session cookie     |
+| OpenAI              | `https://api.openai.com/v1/chat/completions` (called from `scheduleGenerator.js` in the **tab**) | API key in page context |
+| Rate My Professor   | GraphQL (via `facultyScraper.js`)                                                                | None (public)           |
+
+
+`manifest.json` also lists `https://ml3392.app.n8n.cloud/`* — there is **no
 current in-repo call site** to that host; the shipped LLM path is direct OpenAI.
 If a webhook path is reintroduced, document it here and in `decisions.md`.
 
 **Login:** Banner’s anonymous hub is easy to hit without IdP. The extension
 uses **SP-initiated SAML** at `StudentRegistrationSsb/saml/login` for the login
 popup and related recovery — see `docs/decisions.md` D19 and
-`docs/bug8-banner-half-auth-login-popup-diagnosis.md`. Post–SAML DW warm-up
-in the popup: D22 / D23 / `docs/bug11-post-saml-degreeworks-warmup-diagnosis.md`.
+`docs/postmortems/bug8-banner-half-auth-login-popup.md`. Post–SAML DW warm-up
+in the popup: D22 / D23 / `docs/postmortems/bug11-post-saml-degreeworks-warmup.md`.
 
 ---
 
@@ -138,13 +142,15 @@ in the popup: D22 / D23 / `docs/bug11-post-saml-degreeworks-warmup-diagnosis.md`
 All reads: `cacheGet(key, ttl)`. All writes: `cacheSet(key, data)`. Never
 write raw objects without the wrapper (TTL + `{ data, ts }` envelope).
 
-| Key family (pattern)   | TTL (indicative) | Notes        |
-| ---------------------- | ---------------- | ------------ |
-| `course\|{term}\|…`    | 1 h              | Sections/seats |
-| `subjectSearch\|v2\|…` | 1 h              | Batch subject search |
-| `prereq\|{term}\|{crn}`| 24 h             |              |
-| `desc\|{term}\|{crn}`  | 7 d              |              |
-| `courseLink\|…`        | 1 h              | DW wildcard expansion |
-| `terms`                | 24 h             | Term list    |
+
+| Key family (pattern) | TTL (indicative) | Notes     |
+| -------------------- | ---------------- | --------- |
+| `course              | {term}           | …`        |
+| `subjectSearch       | v2               | …`        |
+| `prereq              | {term}           | {crn}`    |
+| `desc                | {term}           | {crn}`    |
+| `courseLink          | …`               | 1 h       |
+| `terms`              | 24 h             | Term list |
+
 
 Version or bump key shapes when semantics change (e.g. `subjectSearch\|v2\|`).

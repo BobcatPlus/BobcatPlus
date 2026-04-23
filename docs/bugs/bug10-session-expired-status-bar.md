@@ -47,5 +47,5 @@ on **any** falsy response without passing through the error object from
 
 - `extension/tab/auth.js` — `checkAuth`, `loadSchedule`  
 - `extension/tab/overview.js` — `applyStudentInfoToUI`  
-- `docs/bug8-banner-half-auth-login-popup-diagnosis.md` (closed — login *entry* UX)  
-- `docs/bug6-import-ux-diagnosis.md` (related import flow)
+- `docs/postmortems/bug8-banner-half-auth-login-popup.md` (closed — login *entry* UX)  
+- `docs/bugs/bug6-import-ux.md` (related import flow)

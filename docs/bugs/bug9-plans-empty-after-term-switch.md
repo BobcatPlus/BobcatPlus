@@ -45,5 +45,5 @@ Banner modes.
 ## Links
 
 - `docs/invariants.md` — Banner sessionmutex  
-- `docs/refactor-on-main-plan.md` — deferred Refactor table  
+- `docs/postmortems/refactor-on-main-split.md` — deferred Refactor table  
 - `extension/bg/plans.js`, `extension/tab/schedule.js`, `extension/tab/auth.js`

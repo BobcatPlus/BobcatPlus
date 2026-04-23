@@ -4,8 +4,8 @@
 //
 //   1. getCurrentSchedule(term) — read the student's registered schedule
 //      for any term, including terms closed to registration. Order of
-//      attempts is locked in (see D19 and docs/bug8-banner-half-auth-
-//      login-popup-diagnosis.md):
+//      attempts is locked in (see D19 and
+//      docs/postmortems/bug8-banner-half-auth-login-popup.md):
 //
 //        a. `term/search?mode=registration` handshake + classRegistration
 //           warm-up → getRegistrationEvents

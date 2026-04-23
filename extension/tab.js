@@ -5,7 +5,7 @@
 //   2. boots the page once terms come back from the background
 //   3. handles the term <select> change
 // Anything else belongs in a ./tab/* module per
-// docs/refactor-on-main-plan.md (Deviation B: direct imports for
+// docs/postmortems/refactor-on-main-split.md (Deviation B: direct imports for
 // addMessage / waitWithChatCountdown — no callback injection).
 // ============================================================
 

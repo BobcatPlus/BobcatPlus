@@ -21,7 +21,7 @@
 // module-private and never re-exported; ES-module semantics guarantee a
 // single instance across every importer in the service worker, which is
 // what we need. If you find yourself reaching for a second queue, stop
-// and reread docs/bug4-eligible-diagnosis.md.
+// and reread docs/bugs/bug4-eligible.md.
 
 let sessionQueue = Promise.resolve();
 

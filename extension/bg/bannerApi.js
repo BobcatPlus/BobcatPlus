@@ -8,7 +8,7 @@
 // Per-request socket safety is delegated to `self.BPPerf.fetchWithTimeout`
 // (populated by the side-effect import of performance/concurrencyPool.js
 // at SW boot). A single stalled TCP socket on Chrome's 6-per-origin cap
-// used to wedge the whole analysis — see docs/bug4-eligible-diagnosis.md
+// used to wedge the whole analysis — see docs/bugs/bug4-eligible.md
 // for the 4-minute-hang repro.
 //
 // Public surface:
@@ -49,7 +49,7 @@ export async function getCurrentTerm() {
 // --- Batch section search — one paginated Banner call per subject.
 //
 // This replaces the per-course call-pattern that used to drive runAnalysis
-// and was the dominant bottleneck (see docs/bug4-eligible-diagnosis.md:
+// and was the dominant bottleneck (see docs/bugs/bug4-eligible.md:
 // "20-25s for 123 courses"). Each single-course searchCourse call does a
 // 3-request handshake (resetDataForm + term/search + searchResults), all
 // serialized behind the withSessionLock queue. Batching by subject collapses
