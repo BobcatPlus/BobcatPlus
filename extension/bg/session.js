@@ -1,6 +1,6 @@
 // Bobcat Plus — Banner session mutex (ES module, module-level singleton).
 //
-// ** Load-bearing invariant — see CLAUDE.md § Load-bearing invariants (#1). **
+// ** Load-bearing invariant — see docs/invariants.md #1. **
 //
 // Banner's StudentRegistrationSsb stores a single "current term + search
 // mode" on the session cookie at the server. Any `term/search?mode=…`

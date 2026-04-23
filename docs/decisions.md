@@ -12,6 +12,35 @@ wins and the RFC must be updated.
 
 ---
 
+## 2026-04-23 — D24: Refactor-branch follow-ups `a2583f6` and `832a155` closed without port
+
+**Context.** The legacy `Refactor` branch (pre–`main` merge) had additional commits
+after the module split. During `refactor-on-main` we explicitly **did not**
+cherry-pick some of them because `main` already contains equivalent or strictly
+better behavior.
+
+**Decision.**
+
+1. **`a2583f6` (10s `AbortController` on prereq fetch):** **Superseded** by
+   **`e687ad6`** and the D20 path — all per-CRN work goes through
+   `self.BPPerf.fetchWithTimeout` (12–15s) inside `self.BPPerf.mapPool` in
+   `bg/prereqs.js` + `bg/analysis.js`. No separate timer layer is required.
+2. **`832a155` (import popup "logged in" fix):** **Superseded** by **D19** and
+   the merged registration/login flow — SP-initiated SAML at `/saml/login`, popup
+   + `openLoginPopup` in `bg/registration.js` handle the half-auth class of bugs
+   differently than the old patch.
+
+**Rationale.** Prevents double-fix debt and documents why those commits do not
+appear as separate SHAs on `refactor-on-main`.
+
+**Reversible by.** N/A (informational close-out). If we ever revert `e687ad6` or
+D19, reassess the old Refactor diffs in isolation.
+
+**See also.** `docs/refactor-on-main-plan.md` (Deferred from `Refactor` branch);
+`docs/open-bugs.md` for Bug 9/10 (different issues: plan ordering + status bar).
+
+---
+
 ## 2026-04-23 (late) — D22: Revert D21 — popup probe stays Banner-only; fix SAML form parser entity decode instead
 
 **Context.** D21 shipped as an uncommitted patch on `refactor-on-main`;
@@ -20,13 +49,13 @@ user smoke testing failed. HAR from the failing run
 wrong:
 
 1. **DW `/api/students/myself` is API-aware.** It returns `401` directly
-   with no redirect to SAML (11 hits in the HAR, all `401`, zero
+  with no redirect to SAML (11 hits in the HAR, all `401`, zero
    `Location:` headers). A silent SW fetch cannot warm DW's SP cookie
    because there is no SAML chain for `resolveRegistrationHtmlToJsonSw`
    to follow. D21's `probeDegreeWorksReady` is architecturally
    impossible on that endpoint.
 2. **Death spiral when DW probe fails forever.** With `probeLoginReady`
-   stuck returning `false`, the verify loop falls through to
+  stuck returning `false`, the verify loop falls through to
    `softRefreshRegistrationTab`, which calls `/saml/logout?local=true`
    and nukes the Banner session the user just completed. Banner then
    needs re-auth, probe fails again, another `saml/logout` fires, etc.
@@ -35,11 +64,11 @@ wrong:
    exact "slowly bouncing between Banner and DW, stopped on a weird
    Banner page" the user described.
 3. **Separate pre-existing parser bug surfaced.** 160 POSTs to
-   `/ssb/classRegistration/https&` in the HAR are caused by
+  `/ssb/classRegistration/https&` in the HAR are caused by
    `extractHtmlAttr` in `extension/bg/registration.js` not decoding
    HTML entities. Banner's current `/saml/login` AuthnRequest form
    ships with
-   `action="https&#x3a;&#x2f;&#x2f;eis-prod.ec.txstate.edu&#x3a;443&#x2f;samlsso"`.
+   `action="https://eis-prod.ec.txstate.edu:443/samlsso"`.
    The regex captures the raw string, `new URL(rawAction, baseHref)`
    treats it as a relative path, we POST to garbage, Banner 302s back
    to `/saml/login`, loop. `tab.js` does not hit this because it uses
@@ -49,13 +78,13 @@ wrong:
 **Decision.**
 
 1. Revert `probeLoginReady` + `probeDegreeWorksReady` in
-   `extension/bg/registration.js`. Restore `probeBannerRegistration`
+  `extension/bg/registration.js`. Restore `probeBannerRegistration`
    (the D19-era single-channel probe).
 2. Fix `extractHtmlAttr` to HTML-entity-decode its return value before
-   handing it to `new URL(...)`. The SW's regex path now matches the
+  handing it to `new URL(...)`. The SW's regex path now matches the
    tab's `DOMParser` path on this axis.
 3. Accept DW half-auth after clear-cookies as a known limitation. The
-   user has a working workaround (visit DW once manually to trigger
+  user has a working workaround (visit DW once manually to trigger
    DW's SAML). `tab.js` `checkAuth` still gates on both SPs, so the
    tab correctly asks the user to re-authenticate when DW is cold.
 
@@ -72,7 +101,7 @@ cargo-culted architecture that caused more breakage than it fixed.
 **Postmortem-in-advance.** *If we hit half-auth complaints again:*
 
 1. **Preferred path:** have `openLoginPopup` navigate the popup tab
-   through the DW worksheet URL once after `probeBannerRegistration`
+  through the DW worksheet URL once after `probeBannerRegistration`
    passes, and wait for the `DW_SUCCESS` URL before firing
    `loginSuccess`. That uses the real browser (with JavaScript) to
    execute the IdP's auto-post, which silent fetch cannot. Same
@@ -80,7 +109,7 @@ cargo-culted architecture that caused more breakage than it fixed.
    into the happy path instead of the recovery path. Small change,
    ~20 lines, self-contained.
 2. **Alternative:** loosen `checkAuth` in `tab.js` to require Banner
-   only and lazy-warm DW on first DW-dependent action. Rejected
+  only and lazy-warm DW on first DW-dependent action. Rejected
    today because DW is needed early in the planner flow (audit
    overview, degree requirements).
 
@@ -137,7 +166,6 @@ premise (silent DW warm via SW fetch) was architecturally impossible.
 Kept here as a decision record; see D22 for details and the correct
 fix (entity-decode in the SAML form parser).
 
-
 **Context.** After D19 fixed the popup landing page (`/saml/login`), a
 second half-auth failure mode remained. The popup's verify tick only
 probed Banner registration; once Banner returned schedule data the popup
@@ -147,28 +175,27 @@ the Banner SP cookie jar on `reg-prod.ec.txstate.edu`. Result: popup
 closed, tab.js `checkAuth` (which requires both endpoints) immediately
 returned false, UI rendered "Not logged in" despite a successful SAML
 login a moment earlier. Reproducible on cleared cookies on both `main`
-and `refactor-on-main`. See `docs/bug11-post-saml-degreeworks-warmup-
-diagnosis.md`.
+and `refactor-on-main`. See `docs/bug11-post-saml-degreeworks-warmup- diagnosis.md`.
 
 **Decision.**
 
 1. `openLoginPopup` in `extension/bg/registration.js` replaces the
-   single-channel `probeBannerRegistration(term)` with a two-channel
+  single-channel `probeBannerRegistration(term)` with a two-channel
    `probeLoginReady(term)` that AND-gates on:
-   - `probeBannerReady(term)` — existing fast-then-slow schedule probe,
-     unchanged.
-   - `probeDegreeWorksReady()` — new silent fetch to
-     `https://dw-prod.ec.txstate.edu/responsiveDashboard/api/students/myself`
-     with `credentials: "include"` + `redirect: "follow"`. The IdP
-     session is already warm from Banner's SAML, so DW's SP-initiated
-     SAML completes silently via the auto-post HTML chain. Reuse the
-     existing SP-agnostic `resolveRegistrationHtmlToJsonSw` to resolve
-     the chain; accept only a body that parses to
-     `{ _embedded: { students: [...] } }`.
+  - `probeBannerReady(term)` — existing fast-then-slow schedule probe,
+  unchanged.
+  - `probeDegreeWorksReady()` — new silent fetch to
+  `https://dw-prod.ec.txstate.edu/responsiveDashboard/api/students/myself`
+  with `credentials: "include"` + `redirect: "follow"`. The IdP
+  session is already warm from Banner's SAML, so DW's SP-initiated
+  SAML completes silently via the auto-post HTML chain. Reuse the
+  existing SP-agnostic `resolveRegistrationHtmlToJsonSw` to resolve
+  the chain; accept only a body that parses to
+  `{ _embedded: { students: [...] } }`.
 2. `scheduleVerify`'s tick calls `probeLoginReady` — `loginSuccess`
-   only fires once both SPs are authenticated.
+  only fires once both SPs are authenticated.
 3. The two-channel probe's AND-gate intentionally matches tab.js
-   `checkAuth`'s AND-gate. If one side ever needs to change, both sides
+  `checkAuth`'s AND-gate. If one side ever needs to change, both sides
    change together — they are a pair.
 
 **Rationale.** The popup and the tab are describing the same concept
@@ -191,18 +218,18 @@ symptom we were fixing.
 **Postmortem-in-advance.** *Six months from now we rolled this back.*
 
 1. **Failure mode:** DegreeWorks consolidates with Banner onto a single
-   SP so the silent warm-up is redundant. **Mitigation:** collapse
+  SP so the silent warm-up is redundant. **Mitigation:** collapse
    `probeLoginReady` back to Banner-only; delete `probeDegreeWorksReady`.
    Zero user-visible change.
 2. **Failure mode:** A DW-side outage makes the silent probe fail
-   persistently while Banner is healthy, stranding users in the popup
+  persistently while Banner is healthy, stranding users in the popup
    until the 90s deadline. **Mitigation:** the popup already sends
    `loginCancelled` on deadline, and tab.js handles that gracefully.
    If the outage is long enough to be a real problem, loosen
    `probeDegreeWorksReady` to gate on `r.ok` only (accept 200-HTML) as
    a temporary degraded mode; that's one line.
 3. **Failure mode:** DW changes `/api/students/myself` envelope shape
-   and the `_embedded.students[0]` check stops matching. **Mitigation:**
+  and the `_embedded.students[0]` check stops matching. **Mitigation:**
    update the shape check to match the new response; this is the same
    fragility `getStudentInfo` already has, not a new one.
 
@@ -215,7 +242,7 @@ before commit is pushed).
 
 ---
 
-## 2026-04-23 — D20: Service worker runs as an ES module; no inline `BPPerf.*` fallback
+## 2026-04-23 — D20: Service worker runs as an ES module; no inline `BPPerf.`* fallback
 
 **Context.** `extension/background.js` previously loaded
 `extension/performance/concurrencyPool.js` + `extension/requirements/*.js`
@@ -230,12 +257,12 @@ regression mode that reintroduced the prereq hang during Bug 4.
 
 1. `manifest.json` → `"background": { "type": "module" }`.
 2. `background.js` replaces `importScripts(...)` with static ES
-   side-effect imports of the same four modules
+  side-effect imports of the same four modules
    (`requirements/graph.js`, `txstFromAudit.js`, `wildcardExpansion.js`,
    `performance/concurrencyPool.js`).
 3. The inline `BPPerf.*` fallback block is **deleted**.
 4. Post-import assertions throw loudly if `self.BPReq.buildGraphFromAudit`
-   / `self.BPPerf.mapPool` / `self.BPPerf.fetchWithTimeout` are not
+  / `self.BPPerf.mapPool` / `self.BPPerf.fetchWithTimeout` are not
    populated after the imports. The service worker refuses to start
    rather than run in a partial-load state.
 
@@ -266,30 +293,31 @@ whether to restore the fallback or accept hard failure.
 
 **Context.** The Chrome login popup (`openLoginPopup` in `extension/background.js`)
 must drive students through **real TXST SSO** when registration session data is
-missing or stale. Opening **`…/ssb/registration/registration` first** often
+missing or stale. Opening `**…/ssb/registration/registration` first** often
 painted Banner’s **anonymous “What would you like to do?” hub** — same broad
-URL family as a signed-in flow — while **`fetch`/logout priming** in the service
+URL family as a signed-in flow — while `**fetch`/logout priming** in the service
 worker did not always clear enough **tab** cookie state to leave that hub.
 Users sat on a half-session surface that never showed the IdP.
 
 **Decision.**
 
 1. **Initial popup URL** — `https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/saml/login`
+
 (SP-initiated SAML; Ellucian standard path). Banner redirects to
 `authentic.txstate.edu` when credentials are needed.
 2. **Recovery after failed registration JSON probes** — navigate the popup tab to
 the same `/saml/login` URL (with a cache-busting query param), after the
-existing **`/saml/logout?local=true`** `fetch` that clears cookies in the
+existing `**/saml/logout?local=true`** `fetch` that clears cookies in the
 worker. Do **not** rely on reloading `/registration` alone.
 3. **DegreeWorks fallback** (`restartFromDegreeWorks`) — after a worksheet load,
-send the tab to **`/saml/login`**, not straight to `/registration`, so the
+send the tab to `**/saml/login`**, not straight to `/registration`, so the
 student does not fall back into the anonymous hub.
 4. **Tab update listener** — pause JSON verification timers only on **actual
 IdP / SAML POST** URLs (`authentic.txstate.edu`, `…/idp/profile/SAML2/POST/SSO`),
 **not** on `/saml/login`. The extension sometimes navigates the tab to
 `/saml/login` on purpose; treating it like “user is at IdP” cleared timers and
 broke recovery.
-5. **`scheduleVerify`** — allow rescheduling when the tab navigates again (clear
+5. `**scheduleVerify`** — allow rescheduling when the tab navigates again (clear
 the previous timer) so a return from SSO starts a fresh probe cycle; drop the
 `if (verifying) return` guard that could skip probes after IdP completion.
 6. **Probe scope** — consider any `…/StudentRegistrationSsb/ssb/…` load (not only
@@ -304,6 +332,7 @@ assume that shape.
 **Postmortem-in-advance.** *Six months from now we rolled this back.*
 
 1. **Failure mode:** TXST changes the SAML entry path (different path than
+
 `/saml/login`). **Mitigation:** capture the new DevTools navigation from a
 clean profile; one-line URL constant update in `openLoginPopup`.
 2. **Failure mode:** `/saml/login` loops or 404s for a subset of accounts.

@@ -1,3 +1,15 @@
+// Bobcat Plus — eligible-course analysis pipeline (ES module).
+//
+// Owns `runAnalysis`: student + audit fetch, wildcard expansion via
+// `fetchCourseLinkFromDW`, subject-batch Banner search, per-CRN prereq/description
+// fan-out through `BPPerf.mapPool`, and `sendUpdate` streaming to the tab.
+//
+// **bail() contract:** after every `await`, `if (bail()) return` so stale
+// runs cannot update the UI after a term switch. Pin count in
+// `tests/unit/bailContract.test.js` — see docs/invariants.md #2.
+//
+// Refactor: `refactor-on-main` commit 7; imported by `../background.js`.
+
 import { cacheSet } from "./cache.js";
 import {
   getTerms,

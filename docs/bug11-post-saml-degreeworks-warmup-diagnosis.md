@@ -56,11 +56,11 @@ That logout **nuked the Banner session the user had just completed**.
 HAR evidence:
 
 - `08:22:04.534` — `getRegistrationEvents` `200 application/json 3629b`
-  (Banner authenticated, session good).
+(Banner authenticated, session good).
 - `08:22:06.218`, `08:22:09.138`, `08:22:13.728` — `saml/logout?local=true`
-  fires repeatedly, each time breaking Banner again.
+fires repeatedly, each time breaking Banner again.
 - Each logout is followed by another round of `https&` POSTs as the
-  newly-broken Banner session tries to re-SAML.
+newly-broken Banner session tries to re-SAML.
 
 This is the "bouncing between Banner and DW" the user saw. The visible
 popup tab was flipping between Banner's `/ssb/` family and
@@ -76,10 +76,10 @@ regex capture without decoding HTML entities. Banner's current
 `/saml/login` AuthnRequest form uses an entity-encoded action:
 
 ```
-<form action="https&#x3a;&#x2f;&#x2f;eis-prod.ec.txstate.edu&#x3a;443&#x2f;samlsso" method="post">
+<form action="https://eis-prod.ec.txstate.edu:443/samlsso" method="post">
 ```
 
-`new URL("https&#x3a;&#x2f;...", base)` sees `https&...` as a
+`new URL("https:/...", base)` sees `https&...` as a
 relative path (doesn't match scheme syntax), resolves it to
 `https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/https&`,
 which 302s back to `/saml/login` (invalid registration path), which
@@ -98,17 +98,15 @@ server-side).
 ## Fix (D22)
 
 1. **Revert D21.** Restore `probeBannerRegistration` (the D19-era
-   Banner-only probe). Delete `probeDegreeWorksReady` /
+  Banner-only probe). Delete `probeDegreeWorksReady` /
    `probeLoginReady`. This removes the death spiral.
-
 2. **Decode HTML entities in `extractHtmlAttr`.** Add
-   `decodeHtmlEntities(s)` covering numeric (`&#x…;`, `&#…;`) and
-   named (`&amp;`, `&lt;`, `&gt;`, `&quot;`, `&apos;`) entities.
+  `decodeHtmlEntities(s)` covering numeric (`&#x…;`, `&#…;`) and
+   named (`&`, `<`, `>`, `"`, `'`) entities.
    Apply the decode to the regex capture before returning. Fixes the
    `https&` loop permanently for any SAML-aware SW fetch.
-
 3. **Accept clear-cookies half-auth as a known limitation.** Per user
-   feedback: *"clear cookies bug can be averted by logging into
+  feedback: *"clear cookies bug can be averted by logging into
    DegreeWorks and registration portal anyways."* `tab.js` `checkAuth`
    still gates on both SPs, so when DW is cold the tab correctly asks
    the user to re-auth — user's workaround (open DW in a tab once) is
@@ -122,25 +120,26 @@ changes to `background.js`, `tab.js`, `popup.js`, or the manifest.
 ## Deferred follow-ups
 
 - **Happy-path DW warm-up in the popup.** **Done (2026-04-23, D23).**
-  After `probeBannerRegistration` succeeds, the popup tab navigates to
-  the DW worksheet URL; when the worksheet loads (`DW_SUCCESS`),
-  `finishLoginSuccess` runs instead of bouncing back through Banner SAML
-  (flag `awaitingDwWorksheetAfterBanner` distinguishes recovery vs happy
-  path).
+After `probeBannerRegistration` succeeds, the popup tab navigates to
+the DW worksheet URL; when the worksheet loads (`DW_SUCCESS`),
+`finishLoginSuccess` runs instead of bouncing back through Banner SAML
+(flag `awaitingDwWorksheetAfterBanner` distinguishes recovery vs happy
+path).
 - **Shared SAML parser across SW + tab.** D22's entity-decode closes
-  the current divergence, but a DOM-parser-lite shared module would
-  prevent future drift. Not urgent.
+the current divergence, but a DOM-parser-lite shared module would
+prevent future drift. Not urgent.
 
 ---
 
 ## Historical record
 
 - **D21** (reverted) — silent DW warm-up via SW fetch. Impossible by
-  the API's own design.
+the API's own design.
 - **D22** (landed) — Banner-only probe + entity-decode in SAML parser.
 - **Composer-2 notes** (`bug11-auth-session-notes-2026-04-23`, local)
-  — correctly identified SW-vs-tab parser split-brain and
-  half-auth UI asymmetry; proposed fix was larger than necessary.
-  The parser call-out was the actionable insight.
-- **`bugged-login.har`** (local) — HAR from the failing D21 run;
-  contains the evidence for all three root causes above.
+— correctly identified SW-vs-tab parser split-brain and
+half-auth UI asymmetry; proposed fix was larger than necessary.
+The parser call-out was the actionable insight.
+- `**bugged-login.har`** (local) — HAR from the failing D21 run;
+contains the evidence for all three root causes above.
+

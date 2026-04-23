@@ -36,7 +36,7 @@
 //      `awaitingDwWorksheetAfterBanner` below.
 //
 // All schedule fetches are serialized through `withSessionLock` — see
-// CLAUDE.md § Load-bearing invariants (#1). The probe loop inside
+// docs/invariants.md #1. The probe loop inside
 // `openLoginPopup` intentionally skips the lock when it's the only thing
 // running; it tests session liveness via `fetchRegistrationEventsViaHistory`
 // (which is GET-only and read-only from Banner's perspective) then falls

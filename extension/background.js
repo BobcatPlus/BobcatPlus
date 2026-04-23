@@ -17,8 +17,8 @@
 // ## Named imports from bg/* (the real refactor target)
 //
 // The bg/* modules are browser-only and use standard ES exports. They
-// were split out of this file to keep `background.js` under ~150 lines
-// as a message router + runAnalysis orchestrator. Dependencies between
+// were split out of this file to keep `background.js` ~O(200) lines
+// as a message router (runAnalysis is imported from bg/analysis.js). Dependencies between
 // them flow only downstream:
 //
 //   constants.js  → cache.js / session.js
@@ -77,8 +77,7 @@ if (
 // extracted into extension/bg/*.js in the refactor-on-main commit 4 and
 // commit 5 splits. The ES imports at the top of this file bring the
 // entry points into scope for runAnalysis and the onMessage router.
-// Plan CRUD is in `bg/plans.js` (commit 6). `runAnalysis` is still here;
-// commit 7 moves it.
+// Plan CRUD: `bg/plans.js`. Eligible analysis: `bg/analysis.js` (`runAnalysis`).
 
 // Every new runAnalysis request bumps this. In-flight stale analyses check
 // their captured generation against the current one and bail, so concurrent

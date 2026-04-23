@@ -1,71 +1,72 @@
-# Bobcat Plus — Documentation Index
+# Bobcat Plus — documentation index
 
-Every markdown doc in the project, one sentence each. If a doc isn't
-listed here, it doesn't exist yet (and adding one requires linking it
-here — see `CONTRIBUTING.md`).
+**Read order (humans and LLMs):** use this table to load the smallest context
+first, then branch by task. Deeper content lives in linked files — avoid
+duplicating long tables in chat.
 
-Start new AI sessions with the **Top of the stack** entries, in order.
+1. [`../CLAUDE.md`](../CLAUDE.md) — router: contexts, where to read next, rules, session hygiene.
+2. [`../HANDOFF.md`](../HANDOFF.md) — what’s next, phases, short commit pointers.
+3. [`decisions.md`](decisions.md) — **tiebreaker** ADR log; if any doc disagrees, this wins.
 
 ---
 
-## Top of the stack (read in this order every new session)
+## Core reference (refactored `extension/`)
 
+| Doc | One-line role |
+| --- | ------------- |
+| [`architecture.md`](architecture.md) | Two JS contexts, eligible + v3 AI pipelines, external systems, cache contract, v3 diagram. |
+| [`invariants.md`](invariants.md) | Non-negotiables (session mutex, `bail()`, pool+timeout, affinity wipe, Jaccard, `validateSchedule`, `addToWorkingSchedule`). |
+| [`file-map.md`](file-map.md) | `bg/*`, `tab/*`, entrypoints, pure `requirements/*` + `performance/*` — *where* to edit. |
+| [`open-bugs.md`](open-bugs.md) | Active and deferred product issues; pointers to `bugN-*-diagnosis` files. |
+| [`refactor-on-main-plan.md`](refactor-on-main-plan.md) | How `background`/`tab` were split; commit chain; blueprint deltas. |
 
-| Order | Doc                              | Why                                                                                                                                  |
-| ----- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| 1     | `[../CLAUDE.md](../CLAUDE.md)`   | Project orientation: what it is, two-context architecture, load-bearing invariants, file map, cache, session hygiene, model routing. |
-| 2     | `[../HANDOFF.md](../HANDOFF.md)` | Live status: scheduler architecture (v3 hybrid), open problems, phase progress, next action, recent commits.                         |
-| 3     | `[decisions.md](decisions.md)`   | Running ADR log. **Tiebreaker** — if any other doc disagrees with this, this wins and the other doc updates.                         |
+---
 
+## Decisions and contribution rules
 
-## Decisions + rules
+| Doc | Role |
+| --- | ---- |
+| [`decisions.md`](decisions.md) | Append-only ADRs. Never split a decision into a new file. |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to add docs; `README.md` or `CLAUDE.md` must index new markdown. |
 
+---
 
-| Doc                                  | Role                                                                            |
-| ------------------------------------ | ------------------------------------------------------------------------------- |
-| `[decisions.md](decisions.md)`       | Append-only log of every locked-in decision with date + "reversible by" clause. |
-| `[CONTRIBUTING.md](CONTRIBUTING.md)` | Four rules for adding / editing docs. Read once, follow always.                 |
+## Phase and feature RFCs
 
+| Doc | Role |
+| --- | ---- |
+| [`requirement-graph-rfc.md`](requirement-graph-rfc.md) | `RequirementGraph` + DegreeWorks mapping. |
+| [`METRICS.md`](METRICS.md) | Phase-0 metric formulas. |
+| [`advising-flow.md`](advising-flow.md) | Phases 4a / 4b / 5 product shape. |
 
-## Phase + feature RFCs
+---
 
+## Bug and incident diagnoses
 
-| Doc                                                    | Role                                                                                                                                                |
-| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `[requirement-graph-rfc.md](requirement-graph-rfc.md)` | Phase-1 RFC: `RequirementGraph` node types + DegreeWorks mapping.                                                                                   |
-| `[METRICS.md](METRICS.md)`                             | Exact formulas for the four Phase-0 scheduler metrics. Acceptance gate for later phases.                                                            |
-| `[advising-flow.md](advising-flow.md)`                 | Product + reality-check doc for Phases 4a / 4b / 5 (pre-advising flow + advisor brief + multi-semester planner). Captures Aidan's 5-question draft. |
+| Doc | Status | Role |
+| --- | --- | ---- |
+| [`bug1-morning-preference-diagnosis.md`](bug1-morning-preference-diagnosis.md) | Closed (`5975c90`) | Morning preference / solver. |
+| [`bug4-eligible-diagnosis.md`](bug4-eligible-diagnosis.md) | 🟡 A/B/C shipped; live verify | Wildcard / eligible pipeline. |
+| [`bug5-online-conflict-diagnosis.md`](bug5-online-conflict-diagnosis.md) | Closed (`fda436e`) | Online vs in-person conflict. |
+| [`bug6-import-ux-diagnosis.md`](bug6-import-ux-diagnosis.md) | 🟡 Deferred | Import + auth banner. |
+| [`bug8-banner-half-auth-login-popup-diagnosis.md`](bug8-banner-half-auth-login-popup-diagnosis.md) | Closed (D19) | `/saml/login` entry. |
+| [`bug9-plans-empty-after-term-switch-diagnosis.md`](bug9-plans-empty-after-term-switch-diagnosis.md) | 🟡 Open | Plan list vs `loadSchedule` order (deferred from Refactor). |
+| [`bug10-session-expired-status-bar-diagnosis.md`](bug10-session-expired-status-bar-diagnosis.md) | 🟡 Open | Auth error string in status bar. |
+| [`bug11-post-saml-degreeworks-warmup-diagnosis.md`](bug11-post-saml-degreeworks-warmup-diagnosis.md) | Closed (D22 + D23) | SAML entity-decode; DW worksheet warm-up. |
 
-
-## Bug diagnoses
-
-
-| Doc                                                                            | Status                                             | Role                                                                                                                                           |
-| ------------------------------------------------------------------------------ | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `[bug1-morning-preference-diagnosis.md](bug1-morning-preference-diagnosis.md)` | ✅ Closed (shipped `5975c90`)                       | Trace + two-layer solver fix for "schedule picks 9:30 AM class when noon+ alternative exists."                                                 |
-| `[bug4-eligible-diagnosis.md](bug4-eligible-diagnosis.md)`                     | 🟡 Layers A/B/C shipped, live-verification pending | Layered fix plan for missing eligible courses (wildcard expansion via DegreeWorks `course-link`, `except` subtraction).                        |
-| `[bug5-online-conflict-diagnosis.md](bug5-online-conflict-diagnosis.md)`       | ✅ Closed (shipped `fda436e`)                       | Online courses were flagged as conflicting with in-person courses because Banner populates `days` / `beginTime` / `endTime` on `INT` sections. |
-| `[bug6-import-ux-diagnosis.md](bug6-import-ux-diagnosis.md)`                   | 🟡 Deferred                                        | Auto-load current schedule + clear auth-expiry banner. Fix after Phase 2.                                                                      |
-| `[bug8-banner-half-auth-login-popup-diagnosis.md](bug8-banner-half-auth-login-popup-diagnosis.md)` | ✅ Closed (2026-04-22, D19)                         | Login popup opened Banner anonymous hub instead of TXST SSO; fix uses `/saml/login` as entry + recovery.                                         |
-| `[bug11-post-saml-degreeworks-warmup-diagnosis.md](bug11-post-saml-degreeworks-warmup-diagnosis.md)` | ✅ Closed (2026-04-23, D22 + D23 supersedes D21)                         | SAML SW parser entity-decode (`https&` loop). After Banner probe succeeds, popup navigates to DW worksheet (`D23`) so `checkAuth` sees both SPs without a manual DW tab. |
-
+---
 
 ## Baselines
 
-
-| Path                                                                   | Role                                                                                                                                                                                        |
-| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `[baselines/phase1-2026-04-21.json](baselines/phase1-2026-04-21.json)` | Regression snapshot of the Phase-1 RequirementGraph adapter against real TXST audit fixtures. Regenerate with `scripts/generate-phase1-baseline.js` whenever the parser or adapter changes. |
-
+| Path | Role |
+| ---- | ---- |
+| [`baselines/phase1-2026-04-21.json`](baselines/phase1-2026-04-21.json) | Phase-1 adapter snapshot; regen via `scripts/generate-phase1-baseline.js` when the parser/adapter changes. |
 
 ---
 
-## What's NOT here (on purpose)
+## Intentionally not duplicated here
 
-- **Per-module "what this code does" docs.** Lives in the top-of-file
- comment of the module itself. See `extension/requirements/wildcardExpansion.js`
-or `extension/performance/concurrencyPool.js` for the template.
-- **End-of-task narrative summaries.** Commit messages cover those.
-- **Unreviewed AI drafts.** If it's checked in, a human has read it
- line-by-line. See `CONTRIBUTING.md` rule 1.
-
+- **Per-module “what the code does”** — top-of-file comments in
+  `extension/**` (e.g. `requirements/wildcardExpansion.js`,
+  `performance/concurrencyPool.js`, `bg/analysis.js`, `tab/auth.js`).
+- **Commit narratives** — git history; use `decisions.md` for durable *why*.

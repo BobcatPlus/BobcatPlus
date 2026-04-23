@@ -1,7 +1,7 @@
 // validateSchedule tests — defense-in-depth checker for the solver output.
 //
 // Why this file exists:
-//   CLAUDE.md § load-bearing invariants #6 says "validateSchedule is defense
+//   docs/invariants.md #6 says "validateSchedule is defense
 //   in depth, not the enforcer. If it ever fires, the solver is wrong." That
 //   contract is only useful if we know `validateSchedule` itself is correct.
 //   Before today this file did not exist — the validator was asserted by

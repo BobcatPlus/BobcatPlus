@@ -55,10 +55,11 @@ doc.
 ## 4. Every new doc must be linked from `README.md` or `CLAUDE.md`
 
 Unindexed docs are dead docs. When you create a new doc, update
-`docs/README.md` (or `../CLAUDE.md` § File map, if it's describing
-extension runtime code) in the same commit. If it doesn't appear in
-one of those two indices, it gets GC'd the next time someone cleans up
-stale docs, and no one will notice.
+`docs/README.md` and/or the “Where to read next” table in `../CLAUDE.md`
+in the same commit. If it doesn't appear in one of those two indices, it
+gets lost on the next cleanup. **Core reference** docs for the extension
+(`architecture`, `invariants`, `file-map`, `open-bugs`) are indexed in
+`README.md` under “Core reference”.
 
 ---
 

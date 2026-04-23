@@ -1,4 +1,4 @@
-// Affinity cache wipe invariant — CLAUDE.md § load-bearing invariants #4.
+// Affinity cache wipe invariant — docs/invariants.md #4.
 //
 // Why this file exists:
 //   The affinityCache in scheduleGenerator.js memoizes Affinity-LLM scores

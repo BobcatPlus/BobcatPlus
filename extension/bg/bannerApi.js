@@ -3,7 +3,7 @@
 // All calls that touch `term/search` or `searchResults/searchResults`
 // route through `withSessionLock` (bg/session.js) — interleaving those
 // calls across terms corrupts Banner's per-session "current term" state
-// silently. See CLAUDE.md § Load-bearing invariants (#1).
+// silently. See docs/invariants.md #1.
 //
 // Per-request socket safety is delegated to `self.BPPerf.fetchWithTimeout`
 // (populated by the side-effect import of performance/concurrencyPool.js

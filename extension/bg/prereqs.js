@@ -11,7 +11,7 @@
 //      original "4-minute prereq hang" — see docs/bug4-eligible-diagnosis.md).
 //      `self.BPPerf` is populated by the side-effect import of
 //      extension/performance/concurrencyPool.js that background.js runs
-//      at SW boot.
+//      at SW boot. Invariants: docs/invariants.md #3.
 //
 //   2. The responses are cached (prereq 24h, description 7d) — these are
 //      effectively static once a term's schedule publishes, and each
