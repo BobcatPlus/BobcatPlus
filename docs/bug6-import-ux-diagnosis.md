@@ -32,18 +32,19 @@ This is the "everything just loads" UX.
 ## Investigation TODO (when we pick this up)
 
 - Read `extension/background.js` login / SAML / session-expired paths.
- Recent commits (`fff6e80`, `4f48968`, `832a155`) have chipped at this
-  already — start with the current handling before replacing it.
+  Popup entry URL is **`/saml/login`** per **D19** (see `docs/decisions.md`);
+  Bug 8 diagnosis for the half-auth hub regression is
+  `docs/bug8-banner-half-auth-login-popup-diagnosis.md`.
 - Decide whether the "no auth" banner lives in the popup, the tab view,
  or both. The tab is where the full scheduler UI lives, but the popup
-  is the fastest place to catch the signal.
+is the fastest place to catch the signal.
 - Shared session-mutex interaction: does auto-load race with manual
  user interaction? `withSessionLock` (see `CLAUDE.md` § load-bearing
-  invariants) should already serialize this, but verify no deadlock
-  paths exist when the session is dead.
+invariants) should already serialize this, but verify no deadlock
+paths exist when the session is dead.
 - Cache behavior on auth failure: confirm we don't serve stale
  `subjectSearch|v2|…` or `course|…` entries from a previous session
-  without a visible "last updated" indicator.
+without a visible "last updated" indicator.
 
 ## Sibling concern (separate bug, not Bug 6)
 

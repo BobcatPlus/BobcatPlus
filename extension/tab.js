@@ -89,6 +89,8 @@ let avoidDays = [];            // days the user asked to keep class-free — per
 let lastRejectedCandidates = new Map();   // CRN → candidate, for chip click direct-add
 let chatGeneration = 0;        // bumped on each sendChat + term switch — stale turns bail
 let currentTerm = null;
+/** term code → Banner description (for empty-schedule hints). */
+let termDescriptionsByCode = Object.create(null);
 let analysisResults = null;
 let eligibleAnalysisSeq = 0;
 let savedSchedules = [];
@@ -102,6 +104,103 @@ let registeredFetchCompleted = false;
 let registeredFetchOk = false;
 let bannerPlans = [];
 let registeredScheduleCache = {};
+
+let autoLoginInFlight = false;
+let lastAutoLoginAt = 0;
+let autoLoginAttempts = 0;
+function maybeAutoLogin(reason = "", termForProbe) {
+  const now = Date.now();
+  // Prevent login-popup thrash loops (open/close/open/close...).
+  if (autoLoginInFlight) return;
+  if (now - lastAutoLoginAt < 45_000) return; // cooldown
+  if (autoLoginAttempts >= 2) return;         // hard cap per page load
+  autoLoginInFlight = true;
+  lastAutoLoginAt = now;
+  autoLoginAttempts++;
+  const t = termForProbe != null ? termForProbe : currentTerm;
+  try {
+    chrome.runtime.sendMessage({ action: "openLoginPopup", term: t || undefined }, () => {});
+  } catch (_) {}
+  const listener = (msg) => {
+    if (msg.type === "loginSuccess") {
+      chrome.runtime.onMessage.removeListener(listener);
+      autoLoginInFlight = false;
+      // After login, confirm session is actually valid before retrying,
+      // otherwise we can loop endlessly on "loginSuccess" without auth.
+      (async () => {
+        const ok = await checkAuth();
+        if (!ok) {
+          $("statusBar").textContent = "Still signed out — click Import Schedule to log in.";
+          return;
+        }
+        analysisResults = null; cachedRawData = null; cachedRegisteredCourses = []; cachedRegisteredTerm = null; conversationHistory = [];
+        await waitWithChatCountdown(1);
+        const result = await loadSchedule(currentTerm);
+        if (result && result.authRequired) {
+          $("statusBar").textContent = "Login didn't stick — open TXST in a normal tab, sign in, then click Import Schedule.";
+          return;
+        }
+        autoLoadEligibleCourses({ forceRefresh: true });
+      })().catch(() => {});
+    }
+    if (msg.type === "loginCancelled") {
+      chrome.runtime.onMessage.removeListener(listener);
+      autoLoginInFlight = false;
+      $("statusBar").textContent = "Login cancelled — click Import Schedule to try again.";
+    }
+  };
+  chrome.runtime.onMessage.addListener(listener);
+  if (reason) $("statusBar").textContent = reason;
+}
+
+const EMPTY_REG_RECOVER_KEY = "bpRegEmptyRecover:";
+const SKIP_EMPTY_RECOVER_ONCE = "bpSkipEmptyRecoverOnce";
+
+function clearEmptyRegistrationRecoverFlag(term) {
+  try {
+    sessionStorage.removeItem(EMPTY_REG_RECOVER_KEY + term);
+  } catch (_) {}
+}
+
+/** When Banner returns JSON but zero events while DegreeWorks looks signed in — stale registration session. */
+async function maybeRecoverEmptyRegistration(term, fromDiskCache) {
+  if (fromDiskCache) return;
+  try {
+    if (sessionStorage.getItem(SKIP_EMPTY_RECOVER_ONCE)) {
+      sessionStorage.removeItem(SKIP_EMPTY_RECOVER_ONCE);
+      return;
+    }
+  } catch (_) {}
+  try {
+    if (sessionStorage.getItem(EMPTY_REG_RECOVER_KEY + term)) return;
+  } catch (_) {}
+  const ok = await checkAuth();
+  if (!ok) return;
+  try {
+    sessionStorage.setItem(EMPTY_REG_RECOVER_KEY + term, "1");
+  } catch (_) {}
+  if (autoLoginInFlight) return;
+  $("statusBar").textContent =
+    "No registration rows from Banner — opening TXST sign-in to refresh…";
+  try {
+    chrome.runtime.sendMessage({ action: "openLoginPopup", term }, () => {});
+  } catch (_) {}
+  const listener = (msg) => {
+    if (msg.type === "loginSuccess") {
+      chrome.runtime.onMessage.removeListener(listener);
+      (async () => {
+        await waitWithChatCountdown(1);
+        await loadSchedule(term);
+      })().catch(() => {});
+    }
+    if (msg.type === "loginCancelled") {
+      chrome.runtime.onMessage.removeListener(listener);
+      $("statusBar").textContent =
+        "Still empty — open TXST in a normal tab, sign in, then Import Schedule.";
+    }
+  };
+  chrome.runtime.onMessage.addListener(listener);
+}
 
 const REG_EVENTS_STORAGE_KEY = "bobcatRegEventsCache";
 function persistRegistrationEvents(term, events) {
@@ -160,6 +259,21 @@ function registerCourseMeta(crn, meta) { if (crn && meta) calendarCourseMetaByCr
 // ============================================================
 
 (async () => {
+  let loginFromToolbar = false;
+  try {
+    const p = new URLSearchParams(location.search);
+    if (p.get("login") === "1") {
+      loginFromToolbar = true;
+      p.delete("login");
+      const qs = p.toString();
+      history.replaceState(
+        {},
+        "",
+        location.pathname + (qs ? "?" + qs : "") + location.hash,
+      );
+    }
+  } catch (_) {}
+
   chrome.runtime.sendMessage(
     { action: "getDegreeAuditOverview" },
     (auditData) => {
@@ -196,7 +310,10 @@ function registerCourseMeta(crn, meta) { if (crn && meta) calendarCourseMetaByCr
     const now = new Date();
     let currentIdx = 0;
     for (let i = 0; i < terms.length; i++) {
-      const dateMatch = terms[i].description.match(/(\d{2}-[A-Z]{3}-\d{4})/);
+      const desc = String(terms[i].description || "");
+      if (/\(view only\)/i.test(desc)) continue;
+      if (/correspondence/i.test(desc)) continue;
+      const dateMatch = desc.match(/(\d{2}-[A-Z]{3}-\d{4})/);
       if (dateMatch) {
         const startDate = new Date(dateMatch[1]);
         if (startDate <= now) {
@@ -206,7 +323,9 @@ function registerCourseMeta(crn, meta) { if (crn && meta) calendarCourseMetaByCr
       }
     }
 
+    termDescriptionsByCode = Object.create(null);
     terms.forEach((t, i) => {
+      termDescriptionsByCode[String(t.code)] = String(t.description || "");
       const opt = document.createElement("option");
       opt.value = t.code;
       opt.textContent = t.description;
@@ -220,6 +339,29 @@ function registerCourseMeta(crn, meta) { if (crn && meta) calendarCourseMetaByCr
 
     (async () => {
       const gen = ++termChangeGeneration;
+      if (loginFromToolbar) {
+        $("statusBar").textContent =
+          "Complete TXST sign-in in the window — Bobcat Plus will load when registration is ready.";
+        await new Promise((resolve) => {
+          const listener = (msg) => {
+            if (
+              msg.type === "loginSuccess" ||
+              msg.type === "loginCancelled"
+            ) {
+              chrome.runtime.onMessage.removeListener(listener);
+              resolve();
+            }
+          };
+          chrome.runtime.onMessage.addListener(listener);
+          chrome.runtime.sendMessage(
+            { action: "openLoginPopup", term: currentTerm },
+            () => {},
+          );
+        });
+        try {
+          sessionStorage.setItem(SKIP_EMPTY_RECOVER_ONCE, "1");
+        } catch (_) {}
+      }
       const ok = await checkAuth();
       if (gen !== termChangeGeneration) return;
       if (ok) {
@@ -895,14 +1037,14 @@ if (importBtn) {
     importBtn.disabled = true; importBtn.classList.add("loading"); importBtn.textContent = "Checking session...";
     const authed = await checkAuth();
     const importSvg = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Import Schedule`;
-    if (!authed) { importBtn.textContent = "Waiting for login..."; addMessage("system", "Opening TXST login — sign in and the import will start automatically."); chrome.runtime.sendMessage({ action: "openLoginPopup" }); attachImportLoginListener(importBtn, importSvg); return; }
+    if (!authed) { importBtn.textContent = "Waiting for login..."; addMessage("system", "Opening TXST login — sign in and the import will start automatically."); chrome.runtime.sendMessage({ action: "openLoginPopup", term: currentTerm }); attachImportLoginListener(importBtn, importSvg); return; }
     importBtn.textContent = "Importing..."; $("statusBar").textContent = "Importing schedule...";
     analysisResults = null; cachedRawData = null; cachedRegisteredCourses = []; cachedRegisteredTerm = null; conversationHistory = [];
     let resetBtn = true;
     try {
       const result = await loadSchedule(currentTerm);
       if (result.stale) return;
-      if (result.authRequired || (!result.hadRegistrationRows && !result.fromDiskCache)) { resetBtn = false; importBtn.textContent = "Waiting for login..."; addMessage("system", "Opening TXST login — sign in to load your registration."); chrome.runtime.sendMessage({ action: "openLoginPopup" }); attachImportLoginListener(importBtn, importSvg); return; }
+      if (result.authRequired || (!result.hadRegistrationRows && !result.fromDiskCache)) { resetBtn = false; importBtn.textContent = "Waiting for login..."; addMessage("system", "Opening TXST login — sign in to load your registration."); chrome.runtime.sendMessage({ action: "openLoginPopup", term: currentTerm }); attachImportLoginListener(importBtn, importSvg); return; }
     } finally { if (resetBtn) { importBtn.disabled = false; importBtn.classList.remove("loading"); importBtn.innerHTML = importSvg; } }
   });
 }
@@ -988,21 +1130,139 @@ class AuthRequiredError extends Error {
   constructor() { super("AUTH_REQUIRED"); this.name = "AuthRequiredError"; }
 }
 
+const TXST_REG_SCHEDULE_BASE =
+  "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb";
+
+const TXST_REG_HISTORY_PAGE =
+  TXST_REG_SCHEDULE_BASE + "/ssb/registrationHistory/registrationHistory";
+
+let tabRegHistorySyncCache = { token: "", ts: 0 };
+const TAB_REG_HISTORY_SYNC_TTL_MS = 10 * 60 * 1000;
+
+async function getRegistrationHistorySynchronizerTokenTab() {
+  const now = Date.now();
+  if (
+    tabRegHistorySyncCache.token &&
+    now - tabRegHistorySyncCache.ts < TAB_REG_HISTORY_SYNC_TTL_MS
+  ) {
+    return tabRegHistorySyncCache.token;
+  }
+  const r = await fetch(TXST_REG_HISTORY_PAGE, {
+    credentials: "include",
+    redirect: "follow",
+  });
+  const html = await r.text();
+  const m = html.match(
+    /<meta\s+name="synchronizerToken"\s+content="([^"]*)"/i,
+  );
+  const token = m && m[1] ? m[1] : "";
+  tabRegHistorySyncCache = { token, ts: now };
+  return token;
+}
+
+async function fetchGetRegistrationEventsPayloadTab(extraHeaders) {
+  const response = await fetch(
+    TXST_REG_SCHEDULE_BASE +
+      "/ssb/classRegistration/getRegistrationEvents?termFilter=",
+    { credentials: "include", headers: extraHeaders || {} },
+  );
+  let text = await response.text();
+  const eventsBase =
+    TXST_REG_SCHEDULE_BASE +
+    "/ssb/classRegistration/getRegistrationEvents";
+  const resolved = await resolveRegistrationHtmlToJson(text, eventsBase);
+  if (resolved.authRequired) throw new AuthRequiredError();
+  text = resolved.text;
+  if (!registrationResponseLooksLikeJson(text)) return null;
+  return normalizeRegistrationEventsPayload(JSON.parse(text));
+}
+
+/**
+ * Same handshake as background `fetchRegistrationEventsHandshake`:
+ * registration mode vs class-search mode (past / closed registration terms).
+ */
+async function fetchRegistrationEventsHandshakeTab(term, registrationMode) {
+  const t = String(term);
+  if (registrationMode) {
+    await fetch(
+      TXST_REG_SCHEDULE_BASE + "/ssb/term/search?mode=registration",
+      {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ term: t }).toString(),
+      },
+    );
+  } else {
+    await fetch(TXST_REG_SCHEDULE_BASE + "/ssb/classSearch/resetDataForm", {
+      method: "POST",
+      credentials: "include",
+    });
+    await fetch(TXST_REG_SCHEDULE_BASE + "/ssb/term/search?mode=search", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        term: t,
+        studyPath: "",
+        studyPathText: "",
+        startDatepicker: "",
+        endDatepicker: "",
+      }).toString(),
+    });
+  }
+  await fetch(
+    TXST_REG_SCHEDULE_BASE + "/ssb/classRegistration/classRegistration",
+    { credentials: "include" },
+  );
+  return fetchGetRegistrationEventsPayloadTab({});
+}
+
+async function fetchRegistrationEventsViaHistoryResetTab(term) {
+  const sync = await getRegistrationHistorySynchronizerTokenTab();
+  const ajax = {
+    Accept: "application/json, text/javascript, */*; q=0.01",
+    "X-Requested-With": "XMLHttpRequest",
+    ...(sync ? { "X-Synchronizer-Token": sync } : {}),
+    Referer: TXST_REG_HISTORY_PAGE,
+  };
+  await fetch(
+    TXST_REG_SCHEDULE_BASE +
+      "/ssb/registrationHistory/reset?term=" +
+      encodeURIComponent(String(term)),
+    { credentials: "include", headers: ajax },
+  );
+  return fetchGetRegistrationEventsPayloadTab(ajax);
+}
+
 function getCurrentSchedule(term) {
   return queueRegistrationFetch(async () => {
+    const runHandshake = async (registrationMode) => {
+      try {
+        return await fetchRegistrationEventsHandshakeTab(term, registrationMode);
+      } catch (e) {
+        if (e instanceof AuthRequiredError) throw e;
+        return null;
+      }
+    };
+    const runHistory = async () => {
+      try {
+        return await fetchRegistrationEventsViaHistoryResetTab(term);
+      } catch (e) {
+        if (e instanceof AuthRequiredError) throw e;
+        return null;
+      }
+    };
     try {
-      await fetch("https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/term/search?mode=registration", { method: "POST", credentials: "include", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ term }).toString() });
-      await fetch("https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/classRegistration", { credentials: "include" });
-      const response = await fetch("https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/getRegistrationEvents?termFilter=", { credentials: "include" });
-      let text = await response.text();
-      const eventsBase = "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/getRegistrationEvents";
-      const resolved = await resolveRegistrationHtmlToJson(text, eventsBase);
-      if (resolved.authRequired) throw new AuthRequiredError();
-      text = resolved.text;
-      if (!registrationResponseLooksLikeJson(text)) return null;
-      return JSON.parse(text);
+      let primary = await runHandshake(true);
+      if (primary !== null && primary.length > 0) return primary;
+      const fallback = await runHandshake(false);
+      if (fallback !== null && fallback.length > 0) return fallback;
+      const history = await runHistory();
+      if (history !== null && history.length > 0) return history;
+      return primary !== null ? primary : fallback !== null ? fallback : history;
     } catch (e) {
-      if (e instanceof AuthRequiredError) throw e; // propagate — don't swallow
+      if (e instanceof AuthRequiredError) throw e;
       return null;
     }
   });
@@ -1012,26 +1272,42 @@ function getCurrentSchedule(term) {
 // LOAD SCHEDULE
 // ============================================================
 
+function registrationCrnKey(ev) {
+  return String(ev.crn ?? ev.courseReferenceNumber ?? "").trim();
+}
+
 function buildRegisteredCoursesFromEvents(data) {
   const seen = new Set(), registered = [], locks = new Set();
-  if (!data || !data.length) return { registered, locks };
-  for (const event of data) {
-    if (seen.has(event.crn)) continue;
-    seen.add(event.crn);
+  const rows = normalizeRegistrationEventsPayload(data);
+  if (!rows.length) return { registered, locks };
+  const expanded = rows.map(expandRegistrationEvent);
+  for (const event of expanded) {
+    const ck = registrationCrnKey(event);
+    if (!ck || seen.has(ck)) continue;
+    seen.add(ck);
     const start = new Date(event.start), end = new Date(event.end);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) continue;
     const dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri"];
     const days = [];
-    for (const ev2 of data) {
-      if (String(ev2.crn) !== String(event.crn)) continue;
+    for (const ev2 of expanded) {
+      if (registrationCrnKey(ev2) !== ck) continue;
       const d = new Date(ev2.start).getDay() - 1;
       if (d >= 0 && d <= 4 && !days.includes(dayNames[d])) days.push(dayNames[d]);
     }
     const bh = start.getHours(), bm = start.getMinutes();
     const eh = end.getHours(), em = end.getMinutes();
-    registered.push({ crn: String(event.crn), subject: event.subject, courseNumber: event.courseNumber, title: event.title, days, beginTime: String(bh).padStart(2,"0") + ":" + String(bm).padStart(2,"0"), endTime: String(eh).padStart(2,"0") + ":" + String(em).padStart(2,"0"), source: "registered", online: false });
-    locks.add(String(event.crn));
+    registered.push({ crn: ck, subject: event.subject, courseNumber: event.courseNumber, title: event.title, days, beginTime: String(bh).padStart(2,"0") + ":" + String(bm).padStart(2,"0"), endTime: String(eh).padStart(2,"0") + ":" + String(em).padStart(2,"0"), source: "registered", online: false });
+    locks.add(ck);
   }
   return { registered, locks };
+}
+
+function emptyScheduleStatusMessage(term) {
+  const d = termDescriptionsByCode[String(term)] || "";
+  if (/\(view only\)/i.test(d)) {
+    return "No meetings for this term — open Banner registration, select this View Only term, then Import Schedule.";
+  }
+  return "No registered courses for this term — if Banner closed registration, try the View Only row for Spring or Summer/Fall.";
 }
 
 async function loadSchedule(term) {
@@ -1069,12 +1345,15 @@ async function loadSchedule(term) {
 
   if (fetchGen !== scheduleFetchGeneration) return { stale: true, hadRegistrationRows: false, fromDiskCache: false, fetchOk: false };
 
+  if (data != null) data = normalizeRegistrationEventsPayload(data);
+
   registeredFetchOk = data !== null;
   registeredFetchCompleted = true;
   if (data && data.length > 0) {
+    clearEmptyRegistrationRecoverFlag(term);
     removeExistingScheduleRefreshPrompts();
     registeredScheduleCache[term] = data;
-    cachedRegisteredCourses = compressRegisteredForLLM(data);
+    cachedRegisteredCourses = compressRegisteredForLLM(data.map(expandRegistrationEvent));
     cachedRegisteredTerm = term;
     const { registered, locks } = buildRegisteredCoursesFromEvents(data);
     lockedCrns = locks;
@@ -1105,12 +1384,16 @@ async function loadSchedule(term) {
     $("statusBar").textContent = authRequired
       ? "Session expired — click Import Schedule to log back in."
       : "Could not reach registration data. Try Import Schedule again.";
+    if (authRequired) {
+      maybeAutoLogin("Session expired — opening login…", term);
+    }
     if (!authRequired) addScheduleRefreshPrompt();
     return { stale: false, hadRegistrationRows: false, fromDiskCache, fetchOk: false, authRequired };
   } else {
     removeExistingScheduleRefreshPrompts();
     cachedRegisteredCourses = []; cachedRegisteredTerm = term;
-    buildEmptyCalendar(); $("statusBar").textContent = "No registered courses for this term";
+    buildEmptyCalendar(); $("statusBar").textContent = emptyScheduleStatusMessage(term);
+    void maybeRecoverEmptyRegistration(term, fromDiskCache);
     return { stale: false, hadRegistrationRows: false, fromDiskCache: false, fetchOk: true, authRequired: false };
   }
 }

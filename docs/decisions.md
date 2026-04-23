@@ -12,6 +12,60 @@ wins and the RFC must be updated.
 
 ---
 
+## 2026-04-22 — D19: Banner login popup opens SP-initiated SSO (`/saml/login`), not `/registration` alone
+
+**Context.** The Chrome login popup (`openLoginPopup` in `extension/background.js`)
+must drive students through **real TXST SSO** when registration session data is
+missing or stale. Opening **`…/ssb/registration/registration` first** often
+painted Banner’s **anonymous “What would you like to do?” hub** — same broad
+URL family as a signed-in flow — while **`fetch`/logout priming** in the service
+worker did not always clear enough **tab** cookie state to leave that hub.
+Users sat on a half-session surface that never showed the IdP.
+
+**Decision.**
+
+1. **Initial popup URL** — `https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/saml/login`
+(SP-initiated SAML; Ellucian standard path). Banner redirects to
+`authentic.txstate.edu` when credentials are needed.
+2. **Recovery after failed registration JSON probes** — navigate the popup tab to
+the same `/saml/login` URL (with a cache-busting query param), after the
+existing **`/saml/logout?local=true`** `fetch` that clears cookies in the
+worker. Do **not** rely on reloading `/registration` alone.
+3. **DegreeWorks fallback** (`restartFromDegreeWorks`) — after a worksheet load,
+send the tab to **`/saml/login`**, not straight to `/registration`, so the
+student does not fall back into the anonymous hub.
+4. **Tab update listener** — pause JSON verification timers only on **actual
+IdP / SAML POST** URLs (`authentic.txstate.edu`, `…/idp/profile/SAML2/POST/SSO`),
+**not** on `/saml/login`. The extension sometimes navigates the tab to
+`/saml/login` on purpose; treating it like “user is at IdP” cleared timers and
+broke recovery.
+5. **`scheduleVerify`** — allow rescheduling when the tab navigates again (clear
+the previous timer) so a return from SSO starts a fresh probe cycle; drop the
+`if (verifying) return` guard that could skip probes after IdP completion.
+6. **Probe scope** — consider any `…/StudentRegistrationSsb/ssb/…` load (not only
+URLs containing `registration/registration`) so post-login landings on e.g.
+class registration still run verification.
+
+**Rationale.** `/saml/login` is the stable **service-provider** entry that
+Banner expects for a new login round-trip; `/registration` as a bookmark URL is
+optimized for browsers that already hold a student session. The extension cannot
+assume that shape.
+
+**Postmortem-in-advance.** *Six months from now we rolled this back.*
+
+1. **Failure mode:** TXST changes the SAML entry path (different path than
+`/saml/login`). **Mitigation:** capture the new DevTools navigation from a
+clean profile; one-line URL constant update in `openLoginPopup`.
+2. **Failure mode:** `/saml/login` loops or 404s for a subset of accounts.
+**Mitigation:** same — verify in browser; consider dual entry (logout **page**
+in-tab was worse UX but forced SSO — documented in Bug 8 history).
+
+**Reversible by.** Reverting the `openLoginPopup` commit(s) that introduced D19.
+The UX regression is immediate if the popup again opens `/registration` without
+`/saml/login`.
+
+---
+
 ## 2026-04-21 PM — D18: Bug 4 Layer B + C ship with split fetcher/orchestrator; defer sections-in-response optimization
 
 **Context.** Bug 4's Layer B (wildcard expansion) was blocked for a week

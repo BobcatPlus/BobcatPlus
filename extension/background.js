@@ -1874,7 +1874,7 @@ async function saveManualPlanToTxst(term, planName, rows, uniqueSessionId) {
 // --- Step 3: Get current registration term ---
 async function getCurrentTerm() {
   const response = await fetch(
-    "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classSearch/getTerms?searchTerm=&offset=1&max=10",
+    "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classSearch/getTerms?searchTerm=&offset=1&max=25",
     { credentials: "include" },
   );
   const terms = await response.json();
@@ -2605,7 +2605,7 @@ async function runAnalysis(sendUpdate, termCodeOverride, isCurrent, { forceRefre
 // --- Get available terms ---
 async function getTerms() {
   const response = await fetch(
-    "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classSearch/getTerms?searchTerm=&offset=1&max=10",
+    "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classSearch/getTerms?searchTerm=&offset=1&max=25",
     { credentials: "include" },
   );
   const terms = await response.json();
@@ -2974,6 +2974,18 @@ function registrationBodyLooksLikeJson(text) {
   return t.startsWith("[") || t.startsWith("{");
 }
 
+/** Banner sometimes returns a wrapper object instead of a bare array. */
+function normalizeRegistrationEventsArray(payload) {
+  if (payload == null) return [];
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.data)) return payload.data;
+  if (Array.isArray(payload?.events)) return payload.events;
+  if (Array.isArray(payload?.registrationEvents))
+    return payload.registrationEvents;
+  if (Array.isArray(payload?.rows)) return payload.rows;
+  return [];
+}
+
 function extractHtmlAttr(fragment, attrName) {
   const re = new RegExp(
     "\\b" + attrName + "\\s*=\\s*(['\"])([\\s\\S]*?)\\1",
@@ -3069,45 +3081,154 @@ async function resolveRegistrationHtmlToJsonSw(initialText, baseHref) {
   return { text, samlHops };
 }
 
+const REG_SCHEDULE_BASE =
+  "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb";
+
+const REG_HISTORY_PAGE_URL =
+  REG_SCHEDULE_BASE + "/ssb/registrationHistory/registrationHistory";
+
+/** Cached Banner anti-CSRF token from the View Registration Information page (past terms). */
+let regHistorySyncTokenCache = { token: "", ts: 0 };
+const REG_HISTORY_SYNC_TTL_MS = 10 * 60 * 1000;
+
+async function getRegistrationHistorySynchronizerToken() {
+  const now = Date.now();
+  if (
+    regHistorySyncTokenCache.token &&
+    now - regHistorySyncTokenCache.ts < REG_HISTORY_SYNC_TTL_MS
+  ) {
+    return regHistorySyncTokenCache.token;
+  }
+  const r = await fetch(REG_HISTORY_PAGE_URL, {
+    credentials: "include",
+    redirect: "follow",
+  });
+  const html = await r.text();
+  const m = html.match(
+    /<meta\s+name="synchronizerToken"\s+content="([^"]*)"/i,
+  );
+  const token = m && m[1] ? m[1] : "";
+  regHistorySyncTokenCache = { token, ts: now };
+  return token;
+}
+
+function bannerStudentJsonAjaxHeaders(syncToken) {
+  const h = {
+    Accept: "application/json, text/javascript, */*; q=0.01",
+    "X-Requested-With": "XMLHttpRequest",
+  };
+  if (syncToken) h["X-Synchronizer-Token"] = syncToken;
+  return h;
+}
+
+/**
+ * GET calendar JSON after session is already warmed (any path).
+ * Optional `extraHeaders` matches Banner XHR (e.g. registration history flow).
+ */
+async function fetchGetRegistrationEventsArray(extraHeaders) {
+  const headers = extraHeaders || {};
+  const response = await fetch(
+    REG_SCHEDULE_BASE +
+      "/ssb/classRegistration/getRegistrationEvents?termFilter=",
+    { credentials: "include", headers },
+  );
+  const eventsBase =
+    REG_SCHEDULE_BASE +
+    "/ssb/classRegistration/getRegistrationEvents";
+  let text = await response.text();
+  const resolved = await resolveRegistrationHtmlToJsonSw(text, eventsBase);
+  text = resolved.text;
+  if (!registrationBodyLooksLikeJson(text)) {
+    console.warn(
+      "[BobcatPlus] getRegistrationEvents non-JSON after SAML hops:",
+      resolved.samlHops,
+      text.slice(0, 80),
+    );
+    return null;
+  }
+  return normalizeRegistrationEventsArray(JSON.parse(text));
+}
+
+/**
+ * View Registration Information — same as Banner "Look up a Schedule":
+ * GET registrationHistory/reset?term=… then getRegistrationEvents (no classRegistration hop).
+ * Required for terms closed to registration (Spring past window, etc.). See pastTerm.har.
+ */
+async function fetchRegistrationEventsViaHistoryReset(term) {
+  try {
+    const sync = await getRegistrationHistorySynchronizerToken();
+    const ajax = bannerStudentJsonAjaxHeaders(sync);
+    const historyHeaders = {
+      ...ajax,
+      Referer: REG_HISTORY_PAGE_URL,
+    };
+    const resetUrl =
+      REG_SCHEDULE_BASE +
+      "/ssb/registrationHistory/reset?term=" +
+      encodeURIComponent(String(term));
+    await fetch(resetUrl, {
+      credentials: "include",
+      headers: historyHeaders,
+    });
+    return await fetchGetRegistrationEventsArray(historyHeaders);
+  } catch (e) {
+    console.warn("[BobcatPlus] registrationHistory reset path failed:", e);
+    return null;
+  }
+}
+
+/**
+ * Warm Banner session for `term`, then GET registration calendar JSON.
+ * `registrationMode`: true = term/search?mode=registration (active registration terms);
+ * false = classSearch reset + term/search?mode=search (often works when registration is closed).
+ */
+async function fetchRegistrationEventsHandshake(term, registrationMode) {
+  const t = String(term);
+  if (registrationMode) {
+    await fetch(REG_SCHEDULE_BASE + "/ssb/term/search?mode=registration", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ term: t }).toString(),
+    });
+  } else {
+    await fetch(REG_SCHEDULE_BASE + "/ssb/classSearch/resetDataForm", {
+      method: "POST",
+      credentials: "include",
+    });
+    await fetch(REG_SCHEDULE_BASE + "/ssb/term/search?mode=search", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        term: t,
+        studyPath: "",
+        studyPathText: "",
+        startDatepicker: "",
+        endDatepicker: "",
+      }).toString(),
+    });
+  }
+  await fetch(
+    REG_SCHEDULE_BASE + "/ssb/classRegistration/classRegistration",
+    { credentials: "include" },
+  );
+  return fetchGetRegistrationEventsArray({});
+}
+
 // --- Get current registered schedule ---
 // Used by popup.js (via getSchedule message). SAML-aware: follows redirect chains
 // that Banner returns when the session needs warming.
 async function getCurrentSchedule(term) {
   return withSessionLock(async () => {
     try {
-      const r1 = await fetch(
-        "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/term/search?mode=registration",
-        {
-          method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({ term: term }).toString(),
-        },
-      );
-
-      const r2 = await fetch(
-        "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/classRegistration",
-        { credentials: "include" },
-      );
-
-      const response = await fetch(
-        "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/getRegistrationEvents?termFilter=",
-        { credentials: "include" },
-      );
-      const eventsBase =
-        "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/getRegistrationEvents";
-      let text = await response.text();
-      const resolved = await resolveRegistrationHtmlToJsonSw(text, eventsBase);
-      text = resolved.text;
-      if (!registrationBodyLooksLikeJson(text)) {
-        console.warn(
-          "[BobcatPlus] getRegistrationEvents non-JSON after SAML hops:",
-          resolved.samlHops,
-          text.slice(0, 80),
-        );
-        return null;
-      }
-      return JSON.parse(text);
+      let primary = await fetchRegistrationEventsHandshake(term, true);
+      if (primary !== null && primary.length > 0) return primary;
+      const fallback = await fetchRegistrationEventsHandshake(term, false);
+      if (fallback !== null && fallback.length > 0) return fallback;
+      const history = await fetchRegistrationEventsViaHistoryReset(term);
+      if (history !== null && history.length > 0) return history;
+      return primary !== null ? primary : fallback !== null ? fallback : history;
     } catch (e) {
       console.error("[BobcatPlus] getCurrentSchedule error:", e);
       return null;
@@ -3115,48 +3236,199 @@ async function getCurrentSchedule(term) {
   });
 }
 
-// --- Login popup: opens DegreeWorks login, watches for success, closes automatically ---
-function openLoginPopup(sendResponse) {
+// --- Login popup: small window (user preference). Pass `registrationTerm` from the tab UI
+// so `term/search` + `getRegistrationEvents` use the same code as the term dropdown (not a guess). ---
+function openLoginPopup(sendResponse, registrationTermExplicit) {
   const DW_URL =
     "https://dw-prod.ec.txstate.edu/responsiveDashboard/worksheets/WEB31";
-  const REG_URL =
-    "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/registration/registration";
+  /** SP-initiated SSO — avoids the anonymous “What would you like to do?” hub on /registration alone. */
+  const REG_SAML_LOGIN_URL = REG_SCHEDULE_BASE + "/saml/login";
+
+  /** Clears Banner registration cookies so the next load hits SSO instead of a half-auth hub. */
+  const REG_LOGOUT_URL =
+    REG_SCHEDULE_BASE + "/saml/logout?local=true";
 
   const DW_SUCCESS = "responsiveDashboard/worksheets";
-  const REG_SUCCESS = "ssb/registration/registration";
 
   let popupWindowId = null;
-  let dwDone = false;
   let cancelled = false;
+  let verifying = false;
+  let verifyTimer = null;
+  let verifyDeadline = 0;
+  let restartCount = 0;
+  /** Resolved once per login attempt — must match Bobcat Plus term selector when provided. */
+  let resolvedProbeTerm = registrationTermExplicit || null;
 
   function cleanup() {
-    chrome.tabs.onUpdated.removeListener(onTabUpdated);
-    chrome.windows.onRemoved.removeListener(onWindowClosed);
+    chrome.tabs.onUpdated.removeListener(onLoginTabUpdated);
+    chrome.windows.onRemoved.removeListener(onLoginWindowClosed);
+    if (verifyTimer) {
+      clearTimeout(verifyTimer);
+      verifyTimer = null;
+    }
   }
 
-  function onTabUpdated(tabId, changeInfo, tab) {
-    if (tab.windowId !== popupWindowId) return;
+  function clearVerifySchedule() {
+    verifying = false;
+    if (verifyTimer) {
+      clearTimeout(verifyTimer);
+      verifyTimer = null;
+    }
+  }
+
+  /** Last resort — DegreeWorks entry (user may get a fresh SSO redirect from there). */
+  function restartFromDegreeWorks(tabId, reason) {
+    clearVerifySchedule();
+    restartCount++;
+    try {
+      chrome.tabs.update(tabId, { url: DW_URL });
+    } catch (_) {}
+    if (reason) console.warn("[BobcatPlus] login popup:", reason);
+  }
+
+  async function pickDefaultTermCode() {
+    try {
+      const terms = await getTerms();
+      const now = new Date();
+      for (const t of terms || []) {
+        const desc = String(t.description || "");
+        if (/\(view only\)/i.test(desc)) continue;
+        if (/correspondence/i.test(desc)) continue;
+        const m = desc.match(/(\d{2}-[A-Z]{3}-\d{4})/);
+        if (!m) continue;
+        const startDate = new Date(m[1]);
+        if (startDate <= now) return t.code;
+      }
+      return (terms && terms[0] && terms[0].code) ? terms[0].code : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /**
+   * Try the fast history handshake first (one flow), then full `getCurrentSchedule` if needed.
+   * Avoids three stacked handshakes on every verify tick while the user is on the login popup.
+   */
+  async function probeBannerRegistration(term) {
+    if (!term) return false;
+    let data = await fetchRegistrationEventsViaHistoryReset(term);
+    if (data !== null) return true;
+    data = await getCurrentSchedule(term);
+    return data !== null;
+  }
+
+  /** Clears cookies via fetch, then reloads registration — no /saml/logout *page* in the tab. */
+  async function softRefreshRegistrationTab(tabId) {
+    try {
+      await fetch(REG_LOGOUT_URL, {
+        credentials: "include",
+        redirect: "follow",
+        cache: "no-store",
+      });
+    } catch (_) {}
+    try {
+      chrome.tabs.update(tabId, {
+        url: REG_SAML_LOGIN_URL + "?_bpLogin=" + Date.now(),
+      });
+    } catch (_) {}
+  }
+
+  function scheduleVerify(tabId) {
+    if (verifyTimer) {
+      clearTimeout(verifyTimer);
+      verifyTimer = null;
+    }
+    verifying = true;
+    verifyDeadline = Date.now() + 90_000;
+    let probeAttemptsSinceReg = 0;
+    let softRefreshRetries = 0;
+
+    const tick = async () => {
+      if (cancelled) return;
+      if (!resolvedProbeTerm) resolvedProbeTerm = await pickDefaultTermCode();
+      const ok = await probeBannerRegistration(resolvedProbeTerm);
+      if (ok) {
+        clearVerifySchedule();
+        cleanup();
+        try {
+          chrome.windows.remove(popupWindowId, () => {
+            chrome.runtime.sendMessage({ type: "loginSuccess" });
+          });
+        } catch (_) {
+          chrome.runtime.sendMessage({ type: "loginSuccess" });
+        }
+        return;
+      }
+
+      probeAttemptsSinceReg++;
+
+      if (probeAttemptsSinceReg < 3 && Date.now() < verifyDeadline) {
+        verifyTimer = setTimeout(tick, 380);
+        return;
+      }
+
+      if (softRefreshRetries < 2 && Date.now() < verifyDeadline) {
+        softRefreshRetries++;
+        probeAttemptsSinceReg = 0;
+        void softRefreshRegistrationTab(tabId);
+        verifyTimer = setTimeout(tick, 1100);
+        return;
+      }
+
+      if (Date.now() > verifyDeadline) {
+        chrome.runtime.sendMessage({ type: "loginCancelled" });
+        clearVerifySchedule();
+        return;
+      }
+
+      if (restartCount >= 4) {
+        chrome.runtime.sendMessage({ type: "loginCancelled" });
+        clearVerifySchedule();
+        return;
+      }
+
+      probeAttemptsSinceReg = 0;
+      softRefreshRetries = 0;
+      restartFromDegreeWorks(
+        tabId,
+        "Banner registration probe failed — restarting from DegreeWorks login",
+      );
+    };
+
+    verifyTimer = setTimeout(tick, 180);
+  }
+
+  function onLoginTabUpdated(tabId, changeInfo, tab) {
+    if (!tab || tab.windowId !== popupWindowId) return;
     if (changeInfo.status !== "complete" || !tab.url) return;
 
-    // Step 1: DegreeWorks login succeeded — navigate to registration to warm session
-    if (!dwDone && tab.url.includes(DW_SUCCESS)) {
-      dwDone = true;
-      chrome.tabs.update(tabId, { url: REG_URL });
+    const u = tab.url;
+
+    // Pause probes while the user is at the IdP; do not match `/saml/login` here — recovery navigates
+    // there programmatically and must keep the verify timer alive until the next `/ssb/` load.
+    if (
+      /authentic\.txstate\.edu/i.test(u) ||
+      /\/idp\/profile\/SAML2\/POST\/SSO/i.test(u)
+    ) {
+      clearVerifySchedule();
       return;
     }
 
-    // Step 2: Registration session is warm — close popup and signal success
-    if (dwDone && tab.url.includes(REG_SUCCESS)) {
-      cleanup();
-      setTimeout(() => {
-        chrome.windows.remove(popupWindowId, () => {
-          chrome.runtime.sendMessage({ type: "loginSuccess" });
-        });
-      }, 600);
+    // Fallback path: DegreeWorks worksheet → force Banner SSO (avoids anonymous SSB hub).
+    if (tab.url.includes(DW_SUCCESS)) {
+      chrome.tabs.update(tabId, {
+        url: REG_SAML_LOGIN_URL + "?_dw=" + Date.now(),
+      });
+      return;
+    }
+
+    // Banner SSB after SAML (registration, class registration, etc.). Hub uses same host/path family as real session.
+    if (/reg-prod\.ec\.txstate\.edu\/StudentRegistrationSsb\/ssb\//i.test(u)) {
+      scheduleVerify(tabId);
     }
   }
 
-  function onWindowClosed(windowId) {
+  function onLoginWindowClosed(windowId) {
     if (windowId !== popupWindowId) return;
     if (cancelled) return;
     cancelled = true;
@@ -3164,21 +3436,41 @@ function openLoginPopup(sendResponse) {
     chrome.runtime.sendMessage({ type: "loginCancelled" });
   }
 
-  chrome.windows.create(
-    {
-      url: DW_URL,
-      type: "popup",
-      width: 520,
-      height: 680,
-      focused: true,
-    },
-    (win) => {
-      popupWindowId = win.id;
-      chrome.tabs.onUpdated.addListener(onTabUpdated);
-      chrome.windows.onRemoved.addListener(onWindowClosed);
-      sendResponse({ started: true });
-    },
-  );
+  void (async () => {
+    try {
+      const ac = new AbortController();
+      const timeout = setTimeout(() => ac.abort(), 2500);
+      await fetch(REG_LOGOUT_URL, {
+        credentials: "include",
+        redirect: "follow",
+        cache: "no-store",
+        signal: ac.signal,
+      });
+      clearTimeout(timeout);
+    } catch (e) {
+      console.warn("[BobcatPlus] Banner logout prime before login popup:", e);
+    }
+
+    chrome.windows.create(
+      {
+        url: REG_SAML_LOGIN_URL,
+        type: "popup",
+        width: 560,
+        height: 720,
+        focused: true,
+      },
+      (win) => {
+        if (!win || win.id == null) {
+          sendResponse({ started: false });
+          return;
+        }
+        popupWindowId = win.id;
+        chrome.tabs.onUpdated.addListener(onLoginTabUpdated);
+        chrome.windows.onRemoved.addListener(onLoginWindowClosed);
+        sendResponse({ started: true });
+      },
+    );
+  })();
 }
 
 // Every new runAnalysis request bumps this. In-flight stale analyses check
@@ -3208,12 +3500,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.action === "openFullTab") {
-    chrome.tabs.create({ url: chrome.runtime.getURL("tab.html") });
+    const q = message.openLogin ? "?login=1" : "";
+    chrome.tabs.create({ url: chrome.runtime.getURL("tab.html" + q) });
     sendResponse({ opened: true });
   }
 
   if (message.action === "openLoginPopup") {
-    openLoginPopup(sendResponse);
+    openLoginPopup(sendResponse, message.term || null);
     return true; // keep channel open for async response
   }
 

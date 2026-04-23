@@ -26,10 +26,9 @@ for the decision record.
 - Term: Fall 2026.
 - Prompt: `Build me a schedule with no classes before noon, no classes friday.`
 - Expected: every top-3 schedule honors the noon floor; at minimum, the
-  "Best for your goals" pick does.
+"Best for your goals" pick does.
 - Actual: all three top schedules include **CS 4371 CRN 12118** (Tue/Thu
-  9:30–10:50 AM). The chat label reads `Couldn't honor: some classes
-  start before 1200` even though a 12:30 PM section is open.
+9:30–10:50 AM). The chat label reads `Couldn't honor: some classes start before 1200` even though a 12:30 PM section is open.
 
 ## What the trace showed
 
@@ -38,24 +37,26 @@ numbers:
 
 - `totalCandidates: 2000` — solver hit the `SOLVER_MAX_RESULTS` cap.
 - **All 20 top schedules across all three archetypes** (`affinity`,
-  `online`, `balanced`) use the same `CS 4371 CRN: 12118`.
+`online`, `balanced`) use the same `CS 4371 CRN: 12118`.
 - Per-schedule breakdown on "Best for your goals":
   - `morningPen: 0.375` (= 2.5 hours × 0.15 per-hour × weight 1.0)
   - `softAvoidPen: 0` (Friday successfully avoided)
   - total: `-0.0573`
 - The variation across ranks 1–20 is only the BIO 1131 lab CRN — CS 4371
-  is locked to 12118 in every single one.
+is locked to 12118 in every single one.
 
 ## Why this is a solver bug, not a scorer bug
 
 The Build-mode panel confirms CS 4371 has four sections:
 
-| Section | Days       | Time            | Seats |
-|---------|------------|-----------------|------:|
-| 001     | Tue/Thu    | 9:30–10:50 AM   |    11 |
-| 002     | Tue/Thu    | 12:30–1:50 PM   |    13 |
-| 003     | Mon/Wed    | 12:30–1:50 PM   |     0 |
-| R04     | Tue/Thu    | 9:30–10:50 AM   |    11 |
+
+| Section | Days    | Time          | Seats |
+| ------- | ------- | ------------- | ----- |
+| 001     | Tue/Thu | 9:30–10:50 AM | 11    |
+| 002     | Tue/Thu | 12:30–1:50 PM | 13    |
+| 003     | Mon/Wed | 12:30–1:50 PM | 0     |
+| R04     | Tue/Thu | 9:30–10:50 AM | 11    |
+
 
 Section 002 has open seats and no conflict with any other course in the
 generated schedules (CS 4398 is Tue/Thu 5:00 PM, MATH 3305 is Mon/Wed
@@ -73,10 +74,10 @@ The scorer, ranker, archetype vectors, intent parser, and day-avoid logic
 are all behaving correctly. Specifically:
 
 - Intent: `noEarlierThan: 12:00`, `morningWeight: 1.0` (floor hit — the
-  user said "no", not "preferably no"), `avoidDays: ["Fri"]`.
+user said "no", not "preferably no"), `avoidDays: ["Fri"]`.
 - Scorer: applies the 0.375 penalty exactly as designed.
 - Ranker: would have placed a 12:30 PM schedule at rank 1 if one existed
-  in the pool.
+in the pool.
 
 ## Fix plan (two layers, ship both)
 
@@ -110,8 +111,8 @@ constraint, not a preference, and promote the corresponding field to a
 solver hard constraint:
 
 - `morningWeight == 1.0 && noEarlierThan != null` →
-  `hardNoEarlierThan = noEarlierThan`, solver drops any section starting
-  before it.
+`hardNoEarlierThan = noEarlierThan`, solver drops any section starting
+before it.
 - `lateWeight == 1.0 && noLaterThan != null` → symmetric.
 - `onlineWeight == 1.0 && preferInPerson` → drop online sections.
 
@@ -130,14 +131,14 @@ place. Together they close Bug 1 and Bug 3.
 ## Unit tests to add
 
 - `preferenceOrdering.test.js`: synth fixture with two sections of the
-  same course (9 AM vs 1 PM) and an active `noEarlierThan: 12:00`. Assert
-  the 1 PM section appears in at least one of `solveMulti`'s orderings
-  before the 2000-cap is hit.
+same course (9 AM vs 1 PM) and an active `noEarlierThan: 12:00`. Assert
+the 1 PM section appears in at least one of `solveMulti`'s orderings
+before the 2000-cap is hit.
 - `hardFloor.test.js`: same fixture, `morningWeight: 1.0`. Assert the
-  solver returns zero schedules that contain the 9 AM section.
+solver returns zero schedules that contain the 9 AM section.
 - Flip the `expectedToFail` test in `scoring.test.js`
-  (`preferInPerson should outrank online`) to `passing` once Layer 2
-  ships, since hard-floor mode prunes online sections entirely.
+(`preferInPerson should outrank online`) to `passing` once Layer 2
+ships, since hard-floor mode prunes online sections entirely.
 
 ## Trace artifact
 

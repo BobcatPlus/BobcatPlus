@@ -1,6 +1,6 @@
 # RFC — RequirementGraph (Phase 1 design, TXST only)
 
-Status: **Draft, no code yet.** Reviewer: <reviewer>. Supersedes the flat `needed[]` contract
+Status: **Draft, no code yet.** Reviewer: . Supersedes the flat `needed[]` contract
 between `background.js` and `scheduleGenerator.js`.
 
 Scope: **Texas State University** DegreeWorks audits only. No adapter interface,
@@ -259,11 +259,11 @@ sibling courses at a time".
    percentComplete is 82. Is `numberGroupsNeeded` "at least" or "exactly"? Proposed
    reading: "at least 1 group must be fully complete; additional complete groups don't
    hurt". Validate against more real audits (need the CS BS one).
-2. `**classCreditOperator: "OR" | "AND"*`* on Course leaves. When both `classesBegin`
+2. `**classCreditOperator: "OR" | "AND"`** on Course leaves. When both `classesBegin`
   and `creditsBegin` are present, does "OR" mean either threshold satisfies? Working
    assumption: yes, OR → min(classes, credits-equivalent) counts. Confirm via the
    CS BS audit where engineering-style credit-hour rules are common.
-3. `**ifElsePart: "IfPart" | "ElsePart"**` — conditional rule branches. Rare in this
+3. `**ifElsePart: "IfPart" | "ElsePart"*`* — conditional rule branches. Rare in this
   audit. Likely tied to transfer credit / test credit / catalog-year switches. Need a
    second audit to see a real example before designing.
 4. **Attribute resolution without catalog attributes.** If the concrete fallback courses

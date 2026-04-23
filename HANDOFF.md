@@ -124,11 +124,11 @@ conflicts. Should never fire, but catches data-quality bugs.
 | —   | **Advisor summary feature.** Requested, never built.                                                                                                        | Upgraded to Phases 4a + 4b + 5. See `docs/advising-flow.md`.                                                                                                            |
 
 
-Closed bugs (historical record only): `docs/bug1-morning-preference-diagnosis.md`, `docs/bug5-online-conflict-diagnosis.md`.
+Closed bugs (historical record only): `docs/bug1-morning-preference-diagnosis.md`, `docs/bug5-online-conflict-diagnosis.md`, `docs/bug8-banner-half-auth-login-popup-diagnosis.md`.
 
 ---
 
-## Phase progress (as of 2026-04-21 PM)
+## Phase progress (as of 2026-04-22)
 
 
 | Phase       | Goal                                                                                                                                                                                    | Status                                                                                                                                                                                                            |
@@ -144,7 +144,7 @@ Closed bugs (historical record only): `docs/bug1-morning-preference-diagnosis.md
 | 4b          | Advisor brief synthesis + RAG for catalog prose                                                                                                                                         | ⬜ not started                                                                                                                                                                                                     |
 | 5           | **Multi-semester path planner.** "Calc 1 must start now or you can't graduate on time."                                                                                                 | ⬜ not started. Needs seasonality data (open). See D8.                                                                                                                                                             |
 | X           | Bug 4 — eligible-course fix rollup (Layers A/B/C)                                                                                                                                       | 🟡 Layers A + B + C shipped; **pending live verification** (reload extension, confirm ≥50 eligible on CS BS / English-CW audits). Attribute wildcards (Layer D) and many-to-many rule mapping (Layer E) deferred. |
-| Y           | **A1+B perf fix + cache-poisoning fix** (`e687ad6`). Bounded concurrency pool + fetch-with-timeout; batch subject search; `subjectSearch|v2|` cache-version bump. | ✅ Shipped on `LLM-algorithm`. Verified live by Aidan: eligible list fills in <3s; prereq phase ticks visibly instead of hanging. **Open PR to `main`.** |
+| Y           | **A1+B perf fix + cache-poisoning fix** (`e687ad6`). Bounded concurrency pool + fetch-with-timeout; batch subject search; `subjectSearch                                                | v2                                                                                                                                                                                                                |
 
 
 ### Delta vs legacy `findNeeded`, measured on fixture audits
@@ -169,7 +169,7 @@ diagnosis doc.
   D17 flag removal, Layer B/C wildcard expansion. See commit history
    and closed-bug docs.
 2. ✅ **A1+B perf fix + cache-poisoning fix** (`e687ad6`): `performance/concurrencyPool.js` +
-   `searchCoursesBySubjects` + `subjectSearch|v2|…` cache versioning.
+  `searchCoursesBySubjects` + `subjectSearch|v2|…` cache versioning.
    Eligible list fills in <3s; prereq phase shows progress instead of
    hanging. Verified live by Aidan. **Needs PR to `main`.**
 3. **Open the PR** (Auto mode, fresh chat). Branch `LLM-algorithm` →
@@ -190,9 +190,14 @@ diagnosis doc.
 
 ## Recent commit history (branch: `LLM-algorithm`)
 
+- **D19 / Bug 8:** Banner login popup opens `/saml/login`
+  (SP-initiated SSO), recovery + DegreeWorks fallback aligned, verify
+  listener/timer fixes; docs: `docs/decisions.md` D19,
+  `docs/bug8-banner-half-auth-login-popup-diagnosis.md`, CLAUDE/HANDOFF/README.
+  _(Subject: `fix(auth): Banner login popup uses SAML SP entry`.)_
 - `e687ad6` — A1+B perf fix + `subjectSearch|v2|` cache versioning +
- `performance/concurrencyPool.js` + `docs/bug5-*`, `docs/bug6-*`,
-  `docs/README.md`, `docs/CONTRIBUTING.md`, HANDOFF trim, CLAUDE.md rewrite
+ `performance/concurrencyPool.js` + `docs/bug5-`*, `docs/bug6-`*,
+`docs/README.md`, `docs/CONTRIBUTING.md`, HANDOFF trim, CLAUDE.md rewrite
 - `88a9d05` — phase(D17): strip `bp_phase1_*` + `bp_phase2_*` feature flags
 - `bbba06c` — docs: close Bug 1/3 in HANDOFF + D14 (shipped `5975c90`, verified live)
 - `5975c90` — phase2(bug1): close calibrator + solver gaps so "no X" constraints reach live run

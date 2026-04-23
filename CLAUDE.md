@@ -17,7 +17,7 @@ the links below for depth.
 | ------------------------------------------------------------ | -------------------------------------------------------------------------------- |
 | Current state, what just shipped, what's next                | `HANDOFF.md`                                                                     |
 | *Why* we agreed to do things this way (ADR log, append-only) | `docs/decisions.md` — **if this and another doc disagree, `decisions.md` wins.** |
-| Per-bug postmortems + fix plans                              | `docs/bug*-diagnosis.md`                                                         |
+| Per-bug postmortems + fix plans                              | `docs/bug*-diagnosis.md` (incl. Bug 8 login popup / `docs/bug8-banner-half-auth-login-popup-diagnosis.md`) |
 | Phase / feature RFCs                                         | `docs/*-rfc.md` (`requirement-graph-rfc`, `METRICS`, `advising-flow`)            |
 
 
@@ -89,7 +89,7 @@ only through message passing.
 | File                                          | Exports                                                                 | Role                                                                                                                                                                         |
 | --------------------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `extension/requirements/graph.js`             | `BPReq.`* primitives                                                    | RequirementGraph node kinds, factories, traversal, invariants.                                                                                                               |
-| `extension/requirements/txstFromAudit.js`     | `BPReq.buildGraphFromAudit`, `BPReq.deriveEligible`                     | TXST DegreeWorks adapter. **Source of truth for `needed[]`** (per D17). Legacy `findNeeded` is fallback only.                                                                |
+| `extension/requirements/txstFromAudit.js`     | `BPReq.buildGraphFromAudit`, `BPReq.deriveEligible`                     | TXST DegreeWorks adapter. **Source of truth for `needed[]*`* (per D17). Legacy `findNeeded` is fallback only.                                                                |
 | `extension/requirements/wildcardExpansion.js` | `BPReq.expandAuditWildcards`, `BPReq.normalizeCourseInformationCourses` | Pure orchestrator + normalizer for DW `course-link` responses. Handles `except` subtraction (Bug 4 Layer C).                                                                 |
 | `extension/performance/concurrencyPool.js`    | `BPPerf.mapPool`, `BPPerf.fetchWithTimeout`                             | Bounded concurrency + AbortController-based fetch timeout. Inline fallbacks in `background.js` mirror these so a failed `importScripts` cannot regress to unbounded fan-out. |
 
@@ -102,14 +102,14 @@ All reads through `cacheGet(key, ttl)`, writes through `cacheSet(key, data)`.
 Never write raw.
 
 
-| Key pattern                              | TTL | Populated by                                  | Notes                                                                                                                                                  |
-| ---------------------------------------- | --- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `course|{term}|{subject}|{courseNumber}` | 1h  | `searchCourse` + backfill from the batch path | Seats change, but not by the minute.                                                                                                                   |
-| `subjectSearch|v2|{term}|{subject}`      | 1h  | `searchCoursesBySubjects`                     | **v2 only caches fully-paginated successful responses.** Empty cached arrays are treated as miss. Bump the version suffix if caching semantics change. |
-| `prereq|{term}|{crn}`                    | 24h | `checkPrereqs`                                | Fixed once the schedule publishes.                                                                                                                     |
-| `desc|{term}|{crn}`                      | 7d  | `getCourseDescription`                        | Static.                                                                                                                                                |
-| `courseLink|{subject}|{numberPattern}`   | 1h  | `fetchCourseLinkFromDW`                       | DW wildcard expansion.                                                                                                                                 |
-| `terms`                                  | 24h | `getTerms`                                    |                                                                                                                                                        |
+| Key pattern    | TTL       | Populated by     | Notes           |
+| -------------- | --------- | ---------------- | --------------- |
+| `course        | {term}    | {subject}        | {courseNumber}` |
+| `subjectSearch | v2        | {term}           | {subject}`      |
+| `prereq        | {term}    | {crn}`           | 24h             |
+| `desc          | {term}    | {crn}`           | 7d              |
+| `courseLink    | {subject} | {numberPattern}` | 1h              |
+| `terms`        | 24h       | `getTerms`       |                 |
 
 
 ---
@@ -170,7 +170,12 @@ is `git revert`.
 
 
 All TXST APIs require an active SSO session. The extension detects auth
-failure and prompts a re-login flow.
+failure and opens a **login popup** from `extension/background.js`
+(`openLoginPopup`). **Do not** seed that popup with
+`/ssb/registration/registration` alone — Banner often serves the anonymous
+**“What would you like to do?”** hub without hitting the IdP. The shipped entry
+and recovery URL is **`StudentRegistrationSsb/saml/login`** (SP-initiated
+SAML); see `docs/decisions.md` **D19** and `docs/bug8-banner-half-auth-login-popup-diagnosis.md`.
 
 ---
 
