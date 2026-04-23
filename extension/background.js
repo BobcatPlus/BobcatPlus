@@ -1,26 +1,40 @@
-// combined old Registration.js and DegreeAudit.js
+// Bobcat Plus service worker entry point.
 //
 // ES-module service worker (manifest.json: background.type = "module").
-// The four side-effect imports below replace the previous importScripts()
-// + inline BPPerf fallback pair. Each imported module is an IIFE that
-// attaches its API to `globalThis` (self.BPReq, self.BPPerf) — valid as
-// an ES module import even without explicit `export` statements.
 //
-// Why no fallback anymore (ref: refactor-on-main commit, pending D-entry
-// in docs/decisions.md):
-//   The previous build kept a duplicate hand-written copy of
-//   BPPerf.mapPool + fetchWithTimeout inline as a "safety net" for
-//   importScripts failure. That copy could drift from the canonical
-//   implementation unnoticed, and a failed deploy would silently use it.
-//   ES-module static imports either all succeed or the service worker
-//   fails to start — there is no partial-load state. If the imports
-//   succeed syntactically, the IIFEs have already attached. The explicit
-//   post-import assertions below convert any "succeeded but didn't
-//   populate" case into a loud startup error instead of a silent regression.
+// ## Side-effect imports (populate self.BPReq / self.BPPerf)
+//
+// The four legacy pure-module imports below run IIFE bodies that attach
+// to `globalThis` (self.BPReq, self.BPPerf). They are dual-use modules —
+// importable in Node unit tests and in the SW — so they don't use real
+// ES exports. The post-import assertions turn any "loaded but didn't
+// populate" case into a loud startup error instead of a silent regression
+// (see D20 in docs/decisions.md when it lands, and the rationale in
+// commit 021e87a). Inline fallback copies of mapPool / fetchWithTimeout
+// are intentionally NOT kept — if these imports fail the extension is
+// broken in a way that must be visible, not papered over.
+//
+// ## Named imports from bg/* (the real refactor target)
+//
+// The bg/* modules are browser-only and use standard ES exports. They
+// were split out of this file to keep `background.js` under ~150 lines
+// as a message router + runAnalysis orchestrator. Dependencies between
+// them flow only downstream: constants → cache / session → bannerApi,
+// prereqs → runAnalysis (still here).
 import "./requirements/graph.js";
 import "./requirements/txstFromAudit.js";
 import "./requirements/wildcardExpansion.js";
 import "./performance/concurrencyPool.js";
+
+import { cacheGet, cacheSet, CACHE_TTL } from "./bg/cache.js";
+import { withSessionLock } from "./bg/session.js";
+import {
+  getTerms,
+  getCurrentTerm,
+  searchCourse,
+  searchCoursesBySubjects,
+} from "./bg/bannerApi.js";
+import { checkPrereqs, getCourseDescription } from "./bg/prereqs.js";
 
 if (!self.BPReq || typeof self.BPReq.buildGraphFromAudit !== "function") {
   throw new Error(
@@ -38,141 +52,6 @@ if (
       "missing mapPool or fetchWithTimeout. Reload the extension and check chrome://extensions.",
   );
 }
-
-const GRADE_MAP = { A: 4, B: 3, C: 2, D: 1, F: 0, CR: 4 };
-
-const SUBJECT_MAP = {
-  "Academic Enrichment": "AE",
-  Accounting: "ACC",
-  "Adult Education": "ADED",
-  "Aerospace Studies": "A S",
-  "African American Studies": "AAS",
-  Agriculture: "AG",
-  "American Sign Language": "ASL",
-  Analytics: "ANLY",
-  Anthropology: "ANTH",
-  Arabic: "ARAB",
-  Art: "ART",
-  "Art Foundation": "ARTF",
-  "Art History": "ARTH",
-  "Art Studio": "ARTS",
-  "Art Theory & Practice": "ARTT",
-  "Athletic Training": "AT",
-  "Bilingual Education": "BILG",
-  Biology: "BIO",
-  "Business Administration": "B A",
-  "Business Law": "BLAW",
-  "Career & Technical Education": "CTE",
-  Chemistry: "CHEM",
-  Chinese: "CHI",
-  "Civil Engineering": "CE",
-  "Communication Design": "ARTC",
-  "Communication Disorders": "CDIS",
-  "Communication Studies": "COMM",
-  "Computer Science": "CS",
-  "Concrete Industry Management": "CIM",
-  "Construction Science & Mgmt": "CSM",
-  "Consumer Affairs": "CA",
-  Counseling: "COUN",
-  "Criminal Justice": "CJ",
-  "Curriculum & Instruction": "CI",
-  Dance: "DAN",
-  "Developmental Education": "DE",
-  "Diversity Studies": "DVST",
-  "Early Childhood Education": "ECE",
-  Economics: "ECO",
-  Education: "ED",
-  "Education Student Teaching": "EDST",
-  "Educational Leadership": "EDCL",
-  "Educational Psychology": "EDP",
-  "Educational Technology": "EDTC",
-  "Electrical Engineering": "EE",
-  Engineering: "ENGR",
-  "Engineering Management": "EMGT",
-  English: "ENG",
-  "English, Lang Arts & Reading": "ELAR",
-  "Exercise & Sports Science": "ESS",
-  "Family & Consumer Sciences": "FCS",
-  "Fashion Merchandising": "FM",
-  Finance: "FIN",
-  French: "FR",
-  "General Science": "GS",
-  Geography: "GEO",
-  Geology: "GEOL",
-  German: "GER",
-  "Health & Human Performance": "HHP",
-  "Health Informatics": "HI",
-  "Health Information Management": "HIM",
-  "Health Professions": "HP",
-  "Health Sciences": "HS",
-  "Healthcare Administration": "HA",
-  History: "HIST",
-  Honors: "HON",
-  "Human Dev & Family Sciences": "HDFS",
-  "IPSE Program": "RISE",
-  "Industrial Engineering": "IE",
-  "Information Systems": "ISAN",
-  "Innovation & Entrepreneurship": "IEM",
-  "Integrated Studies": "INTS",
-  "Interior Design": "ID",
-  "International Studies": "IS",
-  Italian: "ITAL",
-  Japanese: "JAPA",
-  Latin: "LAT",
-  "Latina/o Studies": "LATS",
-  "Legal Studies": "LS",
-  "Long Term Care Administration": "LTCA",
-  Management: "MGT",
-  "Manufacturing Engineering": "MFGE",
-  Marketing: "MKT",
-  "Mass Communication": "MC",
-  Mathematics: "MATH",
-  "Matrls Sci, Engnr, Comrclztn": "MSEC",
-  "Mechanical & Manufacturing Eng": "MMIE",
-  "Mechanical Engineering": "ME",
-  "Medical Laboratory Science": "MLS",
-  "Military Science": "MS",
-  Music: "MU",
-  "Music Ensemble": "MUSE",
-  "Music Performance": "MUSP",
-  "NCBO Mathematics": "NCBM",
-  "Nature & Heritage Tourism": "NHT",
-  Nursing: "NURS",
-  "Nutrition & Foods": "NUTR",
-  "Occupational Education": "OCED",
-  Philosophy: "PHIL",
-  "Physical Fitness & Wellness": "PFW",
-  "Physical Therapy": "PT",
-  Physics: "PHYS",
-  "Political Science (POSI)": "POSI",
-  "Political Science (PS)": "PS",
-  Portuguese: "POR",
-  Psychology: "PSY",
-  "Public Administration": "PA",
-  "Public Health": "PH",
-  "Quant Finance & Economics": "QFE",
-  "Radiation Therapy": "RTT",
-  Reading: "RDG",
-  Recreation: "REC",
-  Religion: "REL",
-  "Research & Creative Expression": "RES",
-  "Respiratory Care": "RC",
-  Russian: "RUSS",
-  "School Psychology": "SPSY",
-  "Social Work": "SOWK",
-  Sociology: "SOCI",
-  "Span Lang, Lit, Culture in Eng": "HSPN",
-  Spanish: "SPAN",
-  "Special Education": "SPED",
-  Statistics: "STAT",
-  "Student Affairs in Higher Ed": "SAHE",
-  "Sustainability Studies": "SUST",
-  Technology: "TECH",
-  "The Graduate College": "GC",
-  Theatre: "TH",
-  "University Seminar": "US",
-  "Women's Studies": "WS",
-};
 
 // --- Step 1: Fetch student info ---
 function trimStr(v) {
@@ -1830,415 +1709,15 @@ async function saveManualPlanToTxst(term, planName, rows, uniqueSessionId) {
   };
 }
 
-// --- Step 3: Get current registration term ---
-async function getCurrentTerm() {
-  const response = await fetch(
-    "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classSearch/getTerms?searchTerm=&offset=1&max=25",
-    { credentials: "include" },
-  );
-  const terms = await response.json();
-  const active = terms.find(
-    (t) =>
-      !t.description.includes("View Only") &&
-      !t.description.includes("Correspondence"),
-  );
-  return { code: active.code, description: active.description };
-}
-
-// Banner's StudentRegistrationSsb session has a single "current term" per mode;
-// interleaved calls across terms corrupt which response ties to which request.
-// Serialize every session-state-mutating operation through this queue.
-let sessionQueue = Promise.resolve();
-function withSessionLock(fn) {
-  const task = sessionQueue.then(fn, fn);
-  sessionQueue = task.then(() => {}, () => {});
-  return task;
-}
-
-// ============================================================
-// chrome.storage.local cache helpers
-// TTLs: course sections 1h, prerequisites 24h, descriptions 7d, terms 24h
-// ============================================================
-const CACHE_TTL = {
-  course:     60 * 60 * 1000,           // 1 hour  — seats change but not by the minute
-  prereq:     24 * 60 * 60 * 1000,      // 24 hours — fixed once schedule publishes
-  desc:       7  * 24 * 60 * 60 * 1000, // 7 days  — truly static
-  terms:      24 * 60 * 60 * 1000,      // 24 hours
-  courseInfo: 60 * 60 * 1000,           // 1 hour  — DW wildcard expansion (same cadence as `course`)
-};
-
-async function cacheGet(key, ttl) {
-  try {
-    const result = await chrome.storage.local.get(key);
-    const entry = result[key];
-    if (entry && Date.now() - entry.ts < ttl) return entry.data;
-  } catch (e) {}
-  return null;
-}
-
-async function cacheSet(key, data) {
-  try {
-    await chrome.storage.local.set({ [key]: { data, ts: Date.now() } });
-  } catch (e) {}
-}
-
-// Returns the timestamp (ms) of a cached entry, or null if missing/expired.
-async function cacheAge(key, ttl) {
-  try {
-    const result = await chrome.storage.local.get(key);
-    const entry = result[key];
-    if (entry && Date.now() - entry.ts < ttl) return entry.ts;
-  } catch (e) {}
-  return null;
-}
-
-// --- Step 4a: Batch section search — one paginated Banner call per subject.
-//
-// This replaces the per-course call-pattern that used to drive runAnalysis
-// and was the dominant bottleneck (see docs/bug4-eligible-diagnosis.md:
-// "20-25s for 123 courses"). Each single-course searchCourse call does a
-// 3-request handshake (resetDataForm + term/search + searchResults), all
-// serialized behind the withSessionLock queue. Batching by subject collapses
-// N courses across K subjects into a single session handshake plus one
-// paginated searchResults call per subject — typically K≈10-15 vs N≈120.
-//
-// Results are cached under `subjectSearch|${term}|${subject}` with the
-// same 1h TTL as single-course search, and also fan out into the legacy
-// per-course cache key so the `getCourseSections` UI message handler
-// (which still calls the single-course searchCourse path) sees a warm
-// cache after any analysis run.
-async function searchCoursesBySubjects(
-  subjects,
-  term,
-  { forceRefresh = false } = {},
-) {
-  const unique = Array.from(
-    new Set(
-      (Array.isArray(subjects) ? subjects : [])
-        .map((s) => (typeof s === "string" ? s.trim() : ""))
-        .filter(Boolean),
-    ),
-  );
-  const results = new Map();
-  if (unique.length === 0) return results;
-
-  // Cache key version suffix: bump whenever caching semantics change so
-  // previously poisoned entries auto-expire rather than surviving their
-  // 1h TTL. v1→v2: we no longer cache partial/failed subject searches
-  // (see the `gotSuccessfulPage && fullyPaginated` guard below).
-  const SUBJECT_CACHE_VERSION = "v2";
-  const cacheKeyFor = (subject) =>
-    `subjectSearch|${SUBJECT_CACHE_VERSION}|${term}|${subject}`;
-
-  const toFetch = [];
-  let oldestTs = null;
-  for (const subject of unique) {
-    const key = cacheKeyFor(subject);
-    if (!forceRefresh) {
-      const cached = await cacheGet(key, CACHE_TTL.course);
-      // Defense in depth: even within v2, treat an empty cached array as
-      // a miss. If a subject legitimately has zero sections this term
-      // we'll refetch once per analysis (cheap — K subjects, not N
-      // courses), which is the right trade vs silently masking every
-      // course in the subject.
-      if (cached && Array.isArray(cached) && cached.length > 0) {
-        results.set(subject, cached);
-        const ts = await cacheAge(key, CACHE_TTL.course);
-        if (ts && (oldestTs === null || ts < oldestTs)) oldestTs = ts;
-        continue;
-      }
-    }
-    toFetch.push(subject);
-  }
-  if (toFetch.length === 0) {
-    results.__oldestTs = oldestTs;
-    return results;
-  }
-
-  await withSessionLock(async () => {
-    // Single session handshake covers every subject we still need to
-    // fetch. Banner's class-search mode is per-term, not per-subject —
-    // once the term is selected, subsequent searchResults calls with
-    // different `txt_subject` values all reuse the same session.
-    await fetch(
-      "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classSearch/resetDataForm",
-      { method: "POST", credentials: "include" },
-    );
-    await fetch(
-      "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/term/search?mode=search",
-      {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          term: term,
-          studyPath: "",
-          studyPathText: "",
-          startDatepicker: "",
-          endDatepicker: "",
-        }).toString(),
-      },
-    );
-
-    const PAGE_MAX = 500; // Banner caps practical page size; we loop if needed
-    const PAGE_CAP = 20;  // safety valve — no subject has 10k sections
-
-    for (const subject of toFetch) {
-      let pageOffset = 0;
-      const all = [];
-      let pageIdx = 0;
-      // Track whether we ever received a well-formed successful response
-      // for this subject. Without this, a timeout / 500 / malformed body
-      // on the first page causes us to cache an empty array, which would
-      // then mask every course in the subject as "not offered" for the
-      // entire 1h cache TTL — the exact "eligible count keeps dropping
-      // between runs" failure mode.
-      let gotSuccessfulPage = false;
-      let fullyPaginated = false;
-      while (pageIdx < PAGE_CAP) {
-        const form = new FormData();
-        form.append("txt_subject", subject);
-        form.append("txt_term", term);
-        form.append("pageOffset", String(pageOffset));
-        form.append("pageMaxSize", String(PAGE_MAX));
-        form.append("sortColumn", "subjectDescription");
-        form.append("sortDirection", "asc");
-        form.append("startDatepicker", "");
-        form.append("endDatepicker", "");
-        form.append("uniqueSessionId", subject + "-" + Date.now());
-        let result;
-        try {
-          const response = await self.BPPerf.fetchWithTimeout(
-            "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/searchResults/searchResults",
-            { method: "POST", credentials: "include", body: form },
-            20000,
-          );
-          result = await response.json();
-        } catch (e) {
-          console.warn(
-            "[BobcatPlus] batch search failed for subject " +
-              subject +
-              " (page " +
-              pageIdx +
-              "): ",
-            e,
-          );
-          break;
-        }
-        if (!result || !result.success || !Array.isArray(result.data)) break;
-        gotSuccessfulPage = true;
-        all.push(...result.data);
-        const total = Number(result.totalCount);
-        if (!Number.isFinite(total) || all.length >= total) {
-          fullyPaginated = true;
-          break;
-        }
-        pageOffset += PAGE_MAX;
-        pageIdx++;
-      }
-
-      // Expose the current run's best-effort results regardless of cache
-      // policy — `runAnalysis` should still get whatever we managed to
-      // fetch this run.
-      results.set(subject, all);
-
-      // Only write to the 1h cache if we actually got a complete, valid
-      // response. Partial pagination or hard failures stay uncached so
-      // the next analysis re-tries with a fresh session instead of
-      // inheriting a poisoned-empty subject.
-      if (gotSuccessfulPage && fullyPaginated) {
-        const key = cacheKeyFor(subject);
-        await cacheSet(key, all);
-        const ts = await cacheAge(key, CACHE_TTL.course);
-        if (ts && (oldestTs === null || ts < oldestTs)) oldestTs = ts;
-      } else {
-        console.warn(
-          "[BobcatPlus] subject " +
-            subject +
-            " search incomplete (pages=" +
-            (pageIdx + (fullyPaginated ? 1 : 0)) +
-            ", rows=" +
-            all.length +
-            "); not caching so the next run retries fresh",
-        );
-      }
-    }
-  });
-
-  results.__oldestTs = oldestTs;
-  return results;
-}
-
-// --- Step 4: Search for sections of a single course ---
-async function searchCourse(subject, courseNumber, term, { forceRefresh = false } = {}) {
-  const key = `course|${term}|${subject}|${courseNumber}`;
-  if (!forceRefresh) {
-    const cached = await cacheGet(key, CACHE_TTL.course);
-    if (cached) return cached;
-  }
-  return withSessionLock(async () => {
-    await fetch(
-      "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classSearch/resetDataForm",
-      { method: "POST", credentials: "include" },
-    );
-    await fetch(
-      "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/term/search?mode=search",
-      {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          term: term,
-          studyPath: "",
-          studyPathText: "",
-          startDatepicker: "",
-          endDatepicker: "",
-        }).toString(),
-      },
-    );
-    const searchForm = new FormData();
-    searchForm.append("txt_subject", subject);
-    searchForm.append("txt_courseNumber", courseNumber);
-    searchForm.append("txt_term", term);
-    searchForm.append("pageOffset", "0");
-    searchForm.append("pageMaxSize", "50");
-    searchForm.append("sortColumn", "subjectDescription");
-    searchForm.append("sortDirection", "asc");
-    searchForm.append("startDatepicker", "");
-    searchForm.append("endDatepicker", "");
-    searchForm.append(
-      "uniqueSessionId",
-      subject + courseNumber + "-" + Date.now(),
-    );
-    const response = await fetch(
-      "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/searchResults/searchResults",
-      { method: "POST", credentials: "include", body: searchForm },
-    );
-    const result = await response.json();
-    if (result.success && result.data && result.data.length > 0) {
-      const key = `course|${term}|${subject}|${courseNumber}`;
-      await cacheSet(key, result.data);
-      return result.data;
-    }
-    return null;
-  });
-}
-
-// --- Step 5: Check prerequisites for a course ---
-function checkPrereqGroup(group, completed, inProgress) {
-  const prereqMatches = [
-    ...group.matchAll(
-      /Course or Test:\s*([A-Za-z]+(?:\s+[A-Za-z]+)*)\s+(\d{4})/g,
-    ),
-  ];
-  const gradeMatches = [...group.matchAll(/Minimum Grade of ([A-Z])/g)];
-  const concurrentMatches = [
-    ...group.matchAll(/May (not )?be taken concurrently/g),
-  ];
-  const missing = [];
-
-  for (let i = 0; i < prereqMatches.length; i++) {
-    const prereqSubject = prereqMatches[i][1].replace(/\s+/g, " ").trim();
-    const prereqNumber = prereqMatches[i][2];
-    const minGrade = gradeMatches[i] ? gradeMatches[i][1] : "D";
-    const minGradeNum = GRADE_MAP[minGrade] || 1;
-    const canTakeConcurrently =
-      concurrentMatches[i] && !concurrentMatches[i][1];
-    const abbrev = SUBJECT_MAP[prereqSubject] || prereqSubject;
-
-    const match = completed.find(
-      (c) => c.subject === abbrev && c.courseNumber === prereqNumber,
-    );
-    const ipMatch = inProgress.some(
-      (c) => c.subject === abbrev && c.courseNumber === prereqNumber,
-    );
-
-    if (match && (GRADE_MAP[match.grade] || 0) >= minGradeNum) {
-      continue;
-    } else if (ipMatch && canTakeConcurrently) {
-      continue;
-    } else if (ipMatch) {
-      missing.push(
-        abbrev + " " + prereqNumber + " (in progress, no concurrent)",
-      );
-    } else {
-      missing.push(abbrev + " " + prereqNumber + " (min " + minGrade + ")");
-    }
-  }
-  return missing;
-}
-
-async function checkPrereqs(crn, term, completed, inProgress) {
-  const prereqKey = `prereq|${term}|${crn}`;
-  let html = await cacheGet(prereqKey, CACHE_TTL.prereq);
-  if (!html) {
-    // fetchWithTimeout prevents a single stalled socket from wedging the
-    // entire Promise.all-over-needed[] pool (see Bug 4 / "prereq hang"
-    // postmortem in docs/bug4-eligible-diagnosis.md).
-    const response = await self.BPPerf.fetchWithTimeout(
-      "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/searchResults/getSectionPrerequisites?term=" +
-        term +
-        "&courseReferenceNumber=" +
-        crn,
-      { credentials: "include" },
-      15000,
-    );
-    html = await response.text();
-    await cacheSet(prereqKey, html);
-  }
-  const orGroups = html.split(/\)\s*or\s*\(/i);
-
-  if (orGroups.length > 1) {
-    let allMissing = [];
-    for (const group of orGroups) {
-      const missing = checkPrereqGroup(group, completed, inProgress);
-      if (missing.length === 0) return { met: true, missing: [] };
-      allMissing.push(...missing);
-    }
-    return { met: false, missing: [...new Set(allMissing)] };
-  } else {
-    const prereqMatches = [
-      ...html.matchAll(
-        /Course or Test:\s*([A-Za-z]+(?:\s+[A-Za-z]+)*)\s+(\d{4})/g,
-      ),
-    ];
-    if (prereqMatches.length === 0) return { met: true, missing: [] };
-    const andGroups = html.split(/\)\s*and\s*\(/i);
-    let allMissing = [];
-    for (const group of andGroups) {
-      const missing = checkPrereqGroup(group, completed, inProgress);
-      allMissing.push(...missing);
-    }
-    if (allMissing.length === 0) return { met: true, missing: [] };
-    return { met: false, missing: allMissing };
-  }
-}
-
-// --- Fetch course description for a section ---
-async function getCourseDescription(crn, term) {
-  const descKey = `desc|${term}|${crn}`;
-  const cached = await cacheGet(descKey, CACHE_TTL.desc);
-  if (cached !== null) return cached;
-  try {
-    const response = await self.BPPerf.fetchWithTimeout(
-      "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/searchResults/getCourseDescription?term=" +
-        term +
-        "&courseReferenceNumber=" +
-        crn,
-      { credentials: "include" },
-      15000,
-    );
-    const rawHtml = await response.text();
-    const text = rawHtml
-      .replace(/<[^>]*>/g, "")
-      .replace(/<!--[\s\S]*?-->/g, "")
-      .trim();
-    await cacheSet(descKey, text);
-    return text;
-  } catch (e) {
-    return "";
-  }
-}
+// Session mutex, chrome.storage cache helpers, Banner section-search
+// (single-course + batched-by-subject), Banner prereq parsing, and
+// Banner course-description fetching were extracted into bg/session.js,
+// bg/cache.js, bg/bannerApi.js, and bg/prereqs.js in the refactor-on-main
+// commit-4 split. The ES imports at the top of this file bring the
+// entry points (withSessionLock, cacheGet/cacheSet, getTerms,
+// getCurrentTerm, searchCourse, searchCoursesBySubjects, checkPrereqs,
+// getCourseDescription, CACHE_TTL) into scope for runAnalysis and the
+// onMessage router below.
 
 // --- Main analysis function ---
 // isCurrent is an optional predicate — when it returns false the caller has
@@ -2559,16 +2038,6 @@ async function runAnalysis(sendUpdate, termCodeOverride, isCurrent, { forceRefre
       wildcards,
     },
   });
-}
-
-// --- Get available terms ---
-async function getTerms() {
-  const response = await fetch(
-    "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classSearch/getTerms?searchTerm=&offset=1&max=25",
-    { credentials: "include" },
-  );
-  const terms = await response.json();
-  return terms.filter((t) => !t.description.includes("Correspondence"));
 }
 
 // --- Get Banner plan items for a term ---
