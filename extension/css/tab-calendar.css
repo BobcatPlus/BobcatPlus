@@ -1,0 +1,230 @@
+/* ── Calendar Panel ── */
+.calendar-panel {
+  flex: 1;
+  padding: 0 16px 16px;
+  overflow-y: auto;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+}
+
+.week-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 4px 8px;
+  flex-shrink: 0;
+}
+.week-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.2px;
+}
+.week-hours {
+  font-size: 12px;
+  color: var(--text2);
+  background: var(--surface);
+  border: 0.5px solid var(--border);
+  border-radius: 20px;
+  padding: 4px 12px;
+  font-weight: 500;
+}
+.week-hours strong {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.calendar {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  background: var(--surface);
+  border-radius: var(--radius);
+  overflow: hidden;
+  border: 0.5px solid var(--border);
+}
+.calendar th {
+  padding: 10px 6px;
+  text-align: center;
+  color: var(--text3);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  background: var(--surface);
+  border-bottom: 0.5px solid var(--border);
+}
+.calendar .time-col {
+  width: 52px;
+}
+.calendar td {
+  border: 0.5px solid var(--border);
+  height: var(--cell-h, 52px);
+  vertical-align: top;
+  position: relative;
+  padding: 0;
+}
+.calendar .time-label {
+  padding: 4px 8px;
+  font-size: 10px;
+  color: var(--text3);
+  text-align: right;
+  background: var(--surface);
+}
+
+/* Course blocks */
+/* Calendar blocks — non-course time (work, gym, personal). Rendered behind
+   course blocks (z-index 0) so they don't intercept clicks. */
+.calendar-block {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  border-radius: 5px;
+  border: 1.5px dashed rgba(110, 106, 103, 0.4);
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(110, 106, 103, 0.05) 0px,
+    rgba(110, 106, 103, 0.05) 4px,
+    transparent 4px,
+    transparent 9px
+  );
+  color: var(--text3);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+  padding: 3px 5px;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 0;
+}
+.calendar-block .block-label-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calendar .course-block {
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  padding: 4px 6px;
+  border-radius: 7px;
+  font-size: 10px;
+  /* Clip to the chip at max zoom-out (small --cell-h); avoids squashed glyphs spilling into adjacent cells */
+  overflow: hidden;
+  z-index: 1;
+  font-weight: 500;
+  border-left-width: 2.5px;
+  border-left-style: solid;
+  cursor: pointer;
+}
+.calendar .course-block .block-info {
+  min-height: 0;
+  align-self: stretch;
+  /* Soft fade at the clip edge (reads as slightly transparent vs a hard cut) */
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    #000 0%,
+    #000 72%,
+    rgba(0, 0, 0, 0.72) 82%,
+    rgba(0, 0, 0, 0.28) 93%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    #000 0%,
+    #000 72%,
+    rgba(0, 0, 0, 0.72) 82%,
+    rgba(0, 0, 0, 0.28) 93%,
+    transparent 100%
+  );
+}
+.calendar .course-block .course-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.calendar .course-block .course-title + .course-time {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Full course title (second .course-time): wrap when tall enough; clamp so overflow hides inside the chip */
+.calendar .course-block .course-title + .course-time + .course-time {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+  white-space: normal;
+  word-break: break-word;
+}
+.calendar .course-block .course-time {
+  font-size: 9px;
+  opacity: 0.7;
+  margin-top: 1px;
+}
+
+/* Color dot */
+.color-dot {
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.35;
+  cursor: pointer;
+  transition:
+    opacity 0.15s,
+    transform 0.15s;
+}
+.color-dot:hover {
+  opacity: 1;
+  transform: scale(1.4);
+}
+
+/* TXST brand chip classes */
+.calendar .course-block.chip-0 {
+  background: rgba(80, 18, 20, 0.1);
+  border-color: #501214;
+  color: #501214;
+}
+.calendar .course-block.chip-1 {
+  background: rgba(38, 103, 37, 0.1);
+  border-color: #266725;
+  color: #266725;
+}
+.calendar .course-block.chip-2 {
+  background: rgba(0, 112, 150, 0.1);
+  border-color: #007096;
+  color: #007096;
+}
+.calendar .course-block.chip-3 {
+  background: rgba(172, 145, 85, 0.12);
+  border-color: #ac9155;
+  color: #6b5a35;
+}
+.calendar .course-block.chip-4 {
+  background: rgba(65, 158, 105, 0.1);
+  border-color: #419e69;
+  color: #2a6644;
+}
+.calendar .course-block.chip-5 {
+  background: rgba(112, 183, 170, 0.1);
+  border-color: #70b7aa;
+  color: #3a7a72;
+}
+.calendar .course-block.chip-6 {
+  background: rgba(235, 186, 69, 0.12);
+  border-color: #ebba45;
+  color: #7a5e00;
+}
+.calendar .course-block.chip-7 {
+  background: rgba(234, 102, 77, 0.1);
+  border-color: #ea664d;
+  color: #a03520;
+}

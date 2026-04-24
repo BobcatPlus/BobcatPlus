@@ -16,6 +16,23 @@ matters (refactor target: entrypoints stay **O(200) lines**).
 | `extension/tab.html` | — | `<script type="module" src="tab.js">` plus classic scripts for `courseColors`, `facultyScraper`, `scheduleGenerator` (run first — they attach `window.BP` and helpers). |
 | `extension/popup.html` + `popup.js` | — | Toolbar popup; mostly opens full tab. |
 
+### Tab page styles (`extension/css/`)
+
+Single cascade split for maintainability. **`tab.html` link order is authoritative** (same as former monolithic `tab.css` top-to-bottom).
+
+| File (load order) | Role |
+| ----------------- | ---- |
+| `tab-base.css` | Reset, `:root` tokens, `body` |
+| `tab-shell.css` | Top bar, hamburger, sidebar, `.main` |
+| `tab-calendar.css` | Calendar panel, week grid, course/calendar blocks, chips |
+| `tab-right-column.css` | Right column: overview, saved schedules, manual builder |
+| `tab-chat.css` | Chat + status bar |
+| `tab-modal.css` | Modal overlay + `.modal-body` base (course shell: Simone block in `tab-lists-plans.css`) |
+| `tab-build-ai.css` | Build section toggles, zoom/import/block chrome, resize, mode tabs, build + AI panels |
+| `tab-lists-plans.css` | Online courses bar, avoid-day, block buttons, eligible, plans, TXST, **Simone** course modal |
+| `tab-responsive.css` | `max-width` media queries |
+| `tab-dark.css` | `prefers-color-scheme: dark` (single block) |
+
 ---
 
 ## Service worker modules (`extension/bg/`)

@@ -1,0 +1,499 @@
+
+/* ── Right Panel ── */
+.right-panel {
+  width: 320px;
+  min-width: 240px;
+  background: var(--surface);
+  border-left: 0.5px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow: hidden;
+  min-height: 0;
+  height: 100%;
+}
+
+/* ── Overview in Sidebar ── */
+.sidebar-overview {
+  border-top: 0.5px solid var(--border);
+  flex-shrink: 0;
+  overflow-y: auto;
+  max-height: 280px;
+}
+.sidebar-overview-header {
+  padding: 12px 20px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+  letter-spacing: -0.2px;
+}
+.sidebar-overview-header:hover {
+  background: var(--bg);
+}
+.sidebar-overview-body {
+  padding: 0 20px 12px;
+}
+.sidebar-overview-body .ov-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.sidebar-overview-body .ov-stat {
+  flex: 1;
+  min-width: 60px;
+}
+.sidebar-overview-body .ov-val {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.5px;
+  line-height: 1.1;
+}
+.sidebar-overview-body .ov-val.ov-red {
+  color: #a03520;
+}
+.sidebar-overview-body .ov-label {
+  font-size: 11px;
+  color: var(--text3);
+  margin-top: 2px;
+}
+.sidebar-overview-body .ov-sub {
+  font-size: 11px;
+  color: var(--text2);
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.sidebar-overview-body .ov-divider {
+  height: 0.5px;
+  background: var(--border);
+  margin: 8px 0;
+}
+.sidebar-overview-body .ov-badge {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 20px;
+  font-size: 10px;
+  font-weight: 500;
+}
+.sidebar-overview-body .ov-green {
+  background: rgba(38, 103, 37, 0.1);
+  color: #266725;
+}
+.sidebar-overview-body .ov-blue {
+  background: rgba(0, 112, 150, 0.1);
+  color: #007096;
+}
+.sidebar-overview-body .ov-amber {
+  background: rgba(100, 72, 12, 0.1);
+  color: #64480c;
+}
+
+/* ── Overview stats (used in sidebar panel) ── */
+.ov-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ov-stat {
+  flex: 1;
+  min-width: 70px;
+}
+.ov-val {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.5px;
+  line-height: 1.1;
+}
+.ov-val.ov-red {
+  color: #a03520;
+}
+.ov-label {
+  font-size: 11px;
+  color: var(--text3);
+  margin-top: 2px;
+}
+.ov-sub {
+  font-size: 11px;
+  color: var(--text2);
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.ov-divider {
+  height: 0.5px;
+  background: var(--border);
+  margin: 10px 0;
+}
+.ov-badge {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 20px;
+  font-size: 10px;
+  font-weight: 500;
+  margin-top: 2px;
+}
+.ov-green {
+  background: rgba(38, 103, 37, 0.1);
+  color: #266725;
+}
+.ov-blue {
+  background: rgba(0, 112, 150, 0.1);
+  color: #007096;
+}
+.ov-amber {
+  background: rgba(100, 72, 12, 0.1);
+  color: #64480c;
+}
+
+/* ── Saved Schedules ── */
+.saved-section {
+  border-bottom: 0.5px solid var(--border);
+  flex-shrink: 0;
+}
+.saved-header {
+  padding: 12px 16px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  border-bottom: 0.5px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  letter-spacing: -0.2px;
+}
+.saved-list {
+  max-height: 160px;
+  overflow-y: auto;
+}
+.saved-item {
+  padding: 9px 16px;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 0.5px solid var(--border);
+  transition: background 0.1s;
+}
+.saved-item:hover {
+  background: var(--bg);
+}
+.saved-item.active {
+  background: var(--bg);
+  border-left: 3px solid var(--maroon);
+}
+.saved-item .name {
+  flex: 1;
+  font-weight: 500;
+}
+.saved-item .info {
+  color: var(--text3);
+  font-size: 10px;
+  margin-right: 8px;
+}
+.saved-item .banner-badge {
+  color: var(--gold);
+  font-size: 9px;
+  font-weight: 600;
+  border: 1px solid var(--gold);
+  border-radius: 3px;
+  padding: 1px 4px;
+  margin-right: 4px;
+  flex-shrink: 0;
+}
+.saved-item .delete-btn {
+  color: var(--text3);
+  cursor: pointer;
+  font-size: 16px;
+  padding: 0 2px;
+  transition: color 0.15s;
+}
+.saved-item .delete-btn:hover {
+  color: #c0392b;
+}
+
+/* Schedules panel — credit count + course pills */
+.sched-item-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  gap: 6px;
+}
+.sched-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.sched-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 5px;
+  width: 100%;
+}
+.sched-pill {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgba(80, 18, 20, 0.07);
+  border: 0.5px solid rgba(80, 18, 20, 0.2);
+  color: var(--maroon);
+  letter-spacing: 0.2px;
+  line-height: 1.5;
+}
+.sched-pill-more {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 500;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: transparent;
+  border: 0.5px solid var(--border);
+  color: var(--text3);
+  line-height: 1.5;
+}
+
+.saved-empty {
+  padding: 12px 16px;
+  font-size: 11px;
+  color: var(--text3);
+}
+
+.view-registered {
+  padding: 9px 16px;
+  font-size: 12px;
+  color: var(--maroon);
+  cursor: pointer;
+  border-bottom: 0.5px solid var(--border);
+  font-weight: 500;
+  transition: background 0.1s;
+}
+.view-registered:hover {
+  background: var(--bg);
+}
+.view-registered.active {
+  background: var(--bg);
+  border-left: 3px solid var(--maroon);
+}
+
+/* ── Manual Schedule Builder (Max's feature) ── */
+.manual-section {
+  border-bottom: 0.5px solid var(--border);
+  flex-shrink: 0;
+  display: none;
+}
+.manual-section.visible {
+  display: block;
+}
+.manual-header {
+  padding: 8px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  border-bottom: 0.5px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.manual-run-btn {
+  padding: 3px 10px;
+  background: var(--maroon);
+  color: #fff;
+  border: none;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.manual-run-btn:hover {
+  background: var(--maroon-light);
+}
+
+/* Eligible list — default (e.g. manual section); Build panel overrides below */
+.manual-section .eligible-list {
+  max-height: 180px;
+  overflow-y: auto;
+  margin-bottom: 6px;
+  border: 0.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+.eligible-course {
+  border-bottom: 0.5px solid var(--border);
+}
+.eligible-course:last-child {
+  border-bottom: none;
+}
+.eligible-course-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 9px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  user-select: none;
+  transition: background 0.1s;
+}
+.eligible-course-header:hover {
+  background: var(--surface);
+}
+.eligible-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--text);
+}
+.eligible-req {
+  color: var(--text3);
+  font-size: 9px;
+  font-weight: 400;
+  margin-left: 4px;
+}
+.eligible-meta {
+  color: var(--text3);
+  font-size: 9px;
+  flex-shrink: 0;
+  margin-left: 6px;
+}
+.eligible-course-body {
+  padding: 4px 8px 6px;
+  background: var(--surface);
+  border-top: 0.5px solid var(--border);
+}
+
+.manual-body {
+  padding: 8px 12px 10px;
+  font-size: 11px;
+}
+.manual-hint {
+  color: var(--text3);
+  font-size: 10px;
+  margin-bottom: 6px;
+  line-height: 1.4;
+}
+.manual-result-row {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  padding: 3px 2px;
+  border-bottom: 0.5px solid var(--border);
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--text2);
+}
+.manual-result-row:last-child {
+  border-bottom: none;
+}
+
+.manual-small-btn,
+.manual-save-btn {
+  width: 100%;
+  padding: 7px 8px;
+  margin-bottom: 6px;
+  background: var(--maroon);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.manual-small-btn:hover,
+.manual-save-btn:hover {
+  background: var(--maroon-light);
+}
+
+.manual-sub {
+  font-weight: 600;
+  color: var(--text);
+  margin: 4px 0;
+  font-size: 11px;
+}
+.manual-draft {
+  list-style: none;
+  max-height: 72px;
+  overflow-y: auto;
+  margin-bottom: 6px;
+  border: 0.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  background: var(--bg);
+}
+.manual-draft li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  font-size: 10px;
+  border-bottom: 0.5px solid var(--border);
+  color: var(--text2);
+}
+.manual-draft li:last-child {
+  border-bottom: none;
+}
+.manual-draft .rm {
+  color: #c0392b;
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: 10px;
+}
+.manual-draft .rm:hover {
+  text-decoration: underline;
+}
+
+.manual-plan-name {
+  width: 100%;
+  padding: 7px 10px;
+  margin-bottom: 6px;
+  background: var(--bg);
+  color: var(--text);
+  border: 0.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-family: inherit;
+  box-sizing: border-box;
+  transition: border-color 0.15s;
+}
+.manual-plan-name:focus {
+  outline: none;
+  border-color: var(--maroon);
+}
+
+.manual-link-btn {
+  width: 100%;
+  padding: 4px;
+  background: transparent;
+  color: var(--text3);
+  border: none;
+  font-size: 10px;
+  font-family: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  transition: color 0.15s;
+}
+.manual-link-btn:hover {
+  color: var(--maroon);
+}
+

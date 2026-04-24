@@ -1,0 +1,31 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  -webkit-font-smoothing: antialiased;
+}
+
+:root {
+  --maroon: #501214;
+  --maroon-light: #6b1a1c;
+  --gold: #ac9155;
+  --bg: #f5f1ee;
+  --surface: #ffffff;
+  --text: #363534;
+  --text2: #6e6a67;
+  --text3: #aeaaa7;
+  --border: rgba(54, 53, 52, 0.1);
+  --radius: 14px;
+  --radius-sm: 10px;
+}
+
+body {
+  font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
+}
+

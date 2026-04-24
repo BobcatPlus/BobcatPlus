@@ -1,0 +1,498 @@
+/* ── Section toggle rows (Build panel — click to add/remove) ── */
+.section-toggle-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 4px;
+  border-bottom: 0.5px solid var(--border);
+  font-size: 10px;
+  cursor: pointer;
+  transition: background 0.1s;
+  color: var(--text2);
+  line-height: 1.35;
+  border-radius: 4px;
+  user-select: none;
+}
+.section-toggle-row:last-child {
+  border-bottom: none;
+}
+.section-toggle-row:hover {
+  background: var(--bg);
+}
+.section-toggle-row.on-calendar {
+  color: var(--text);
+  font-weight: 500;
+}
+.section-check {
+  width: 13px;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--maroon);
+  line-height: 1.35;
+}
+.section-toggle-row.no-seats {
+  opacity: 0.55;
+}
+
+/* ── Calendar zoom controls ── */
+.zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.zoom-btn {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+  border: 0.5px solid var(--border);
+  border-radius: 4px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text2);
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.1s, color 0.1s;
+  padding: 0;
+}
+.zoom-btn:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+.zoom-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+/* ── Import Schedule button (Mi's feature) ── */
+.import-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 6px;
+  border: 0.5px solid var(--border);
+  background: var(--surface);
+  color: var(--text2);
+  cursor: pointer;
+  font-family: inherit;
+  transition:
+    background 0.15s,
+    opacity 0.15s;
+  white-space: nowrap;
+}
+.import-btn:hover {
+  background: var(--bg);
+}
+.import-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.import-btn.loading {
+  opacity: 0.7;
+}
+
+/* ── Add Block button (week header) ── */
+.add-block-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 6px;
+  border: 0.5px solid var(--border);
+  background: var(--surface);
+  color: var(--text2);
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+.add-block-btn:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* ── Calendar block X (remove) button ── */
+.block-remove-x {
+  position: absolute;
+  top: 2px;
+  right: 3px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--text3);
+  padding: 0 2px;
+  border-radius: 3px;
+  pointer-events: auto;
+  opacity: 0.6;
+  transition: opacity 0.12s, color 0.12s;
+  z-index: 2;
+}
+.block-remove-x:hover {
+  opacity: 1;
+  color: #c0392b;
+}
+
+/* ── Block creation modal: text + time inputs ── */
+.block-input {
+  width: 100%;
+  padding: 7px 10px;
+  border: 0.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.block-input:focus {
+  border-color: var(--maroon);
+}
+
+/* ── Day picker row ── */
+.block-days-row {
+  display: flex;
+  gap: 6px;
+}
+.block-day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.block-day input[type="checkbox"] {
+  display: none;
+}
+.block-day span {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 0.5px solid var(--border);
+  background: var(--bg);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text2);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  user-select: none;
+}
+.block-day input[type="checkbox"]:checked + span {
+  background: var(--maroon);
+  color: #fff;
+  border-color: var(--maroon);
+}
+.block-day span:hover {
+  border-color: var(--maroon);
+  color: var(--maroon);
+}
+
+/* ── Resize Handle (Simone) ── */
+.resize-handle {
+  width: 5px;
+  cursor: col-resize;
+  background: transparent;
+  flex-shrink: 0;
+  transition: background 0.15s;
+  position: relative;
+  z-index: 10;
+}
+.resize-handle:hover {
+  background: rgba(80, 18, 20, 0.15);
+}
+
+/* ── Custom Scrollbar — iOS-style (Simone) ── */
+.calendar-panel::-webkit-scrollbar {
+  width: 4px;
+}
+.calendar-panel::-webkit-scrollbar-track {
+  background: transparent;
+}
+.calendar-panel::-webkit-scrollbar-thumb {
+  background: rgba(54, 53, 52, 0.2);
+  border-radius: 999px;
+}
+.calendar-panel::-webkit-scrollbar-thumb:hover {
+  background: rgba(54, 53, 52, 0.35);
+}
+.calendar-panel::-webkit-scrollbar-button {
+  display: none;
+}
+
+/* ── TXST Header Enhancements (Simone) ── */
+.sidebar-header {
+  border-bottom: 2px solid var(--gold);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+.top-bar {
+  border-bottom: 2px solid var(--gold);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.header-logo {
+  height: 33px;
+  width: auto;
+  object-fit: contain;
+  filter: brightness(0) invert(1);
+}
+
+/* ── Build/AI Mode Tabs ── */
+.mode-tabs {
+  display: flex;
+  border-bottom: 0.5px solid var(--border);
+  flex-shrink: 0;
+  background: var(--surface);
+}
+.mode-tab {
+  flex: 1;
+  padding: 10px 0;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text3);
+  border-bottom: 2px solid transparent;
+  transition:
+    color 0.15s,
+    border-color 0.15s;
+  letter-spacing: -0.2px;
+}
+.mode-tab.active {
+  color: var(--maroon);
+  border-bottom-color: var(--maroon);
+}
+.mode-tab:hover:not(.active) {
+  color: var(--text2);
+}
+
+/* ── Schedules collapsible header ── */
+.schedules-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 16px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+  border-bottom: 0.5px solid var(--border);
+  flex-shrink: 0;
+  transition: background 0.1s;
+  letter-spacing: -0.2px;
+}
+.schedules-header:hover {
+  background: var(--bg);
+}
+.schedules-chevron {
+  font-size: 14px;
+  color: var(--text3);
+  transition: transform 0.2s;
+  display: inline-block;
+}
+.schedules-header.collapsed .schedules-chevron {
+  transform: rotate(0deg);
+}
+.schedules-chevron {
+  transform: rotate(90deg);
+}
+.schedules-body {
+  flex-shrink: 0;
+}
+.schedules-body .saved-list {
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+/* ── Build panel ── */
+.build-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.eligible-status {
+  padding: 6px 12px 3px;
+  font-size: 11px;
+  color: var(--text3);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* ── Build panel action buttons (Jira/SF aesthetic) ── */
+.bp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text3);
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: inherit;
+  transition: border-color 0.1s, background 0.1s, color 0.1s;
+  flex-shrink: 0;
+}
+.bp-chip:hover {
+  border-color: rgba(80, 18, 20, 0.35);
+  color: var(--maroon);
+}
+.bp-chip.active {
+  border-color: rgba(80, 18, 20, 0.4);
+  background: rgba(80, 18, 20, 0.07);
+  color: var(--maroon);
+}
+.bp-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text3);
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: inherit;
+  transition: border-color 0.1s, background 0.1s, color 0.1s;
+  flex-shrink: 0;
+}
+.bp-icon-btn:hover {
+  border-color: rgba(80, 18, 20, 0.35);
+  color: var(--maroon);
+  background: rgba(80, 18, 20, 0.03);
+}
+.eligible-cache-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1px 12px 5px;
+  font-size: 10px;
+  color: var(--text3);
+  flex-shrink: 0;
+}
+.build-panel .eligible-list {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  margin: 0 12px;
+  margin-bottom: 0;
+  border: 0.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+.txst-save-area {
+  padding: 12px;
+  border-top: 0.5px solid var(--border);
+  flex-shrink: 0;
+  margin-top: auto;
+  background: var(--surface);
+}
+
+/* ── AI panel ── */
+.ai-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.ai-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 0.5px solid var(--border);
+  background: var(--bg);
+  flex-shrink: 0;
+}
+.ai-toolbar-hint {
+  font-size: 10px;
+  color: var(--text3);
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ai-lock-all-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 4px;
+  border: 1px solid rgba(80, 18, 20, 0.35);
+  background: rgba(80, 18, 20, 0.06);
+  color: var(--maroon);
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: inherit;
+  transition: background 0.1s, border-color 0.1s;
+  flex-shrink: 0;
+}
+.ai-lock-all-btn:hover {
+  background: rgba(80, 18, 20, 0.12);
+  border-color: rgba(80, 18, 20, 0.5);
+}
+.ai-lock-all-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.ai-clear-all-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 4px;
+  border: 1px solid rgba(120, 120, 120, 0.35);
+  background: rgba(120, 120, 120, 0.06);
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: inherit;
+  margin-left: 4px;
+  transition: background 0.1s, border-color 0.1s;
+  flex-shrink: 0;
+}
+.ai-clear-all-btn:hover {
+  background: rgba(180, 60, 50, 0.12);
+  border-color: rgba(180, 60, 50, 0.5);
+  color: #b04030;
+}
+.ai-clear-all-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}

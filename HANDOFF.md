@@ -99,4 +99,5 @@ and `docs/bugs/bug10-session-expired-status-bar.md`; see D24 in
 
 - The **full v3 pipeline ASCII** lives in `[docs/architecture.md](docs/architecture.md)` (not here).
 - The `[CLAUDE.md](CLAUDE.md)` `**### Next steps`** block applies to **AI chat turns**, not to this file.
+- **Tab page CSS (extension):** the monolithic `extension/css/tab.css` was split into `tab-base.css` … `tab-dark.css` with **load order in `extension/tab.html`** (same cascade as the old file). Pointers: [`docs/file-map.md`](docs/file-map.md) “Tab page styles”, updated [`CLAUDE.md`](CLAUDE.md) task row. Trims: duplicate pre-Simone modal rules (Simone + shared `.modal-body` in `tab-lists-plans` / `tab-modal`), **removed** dead course-modal color-picker markup/CSS (never wired in JS), **merged** the two `prefers-color-scheme: dark` blocks into `tab-dark.css`. Calendar: course chips use clip + bottom fade at tight zoom in `tab-calendar.css`.
 
