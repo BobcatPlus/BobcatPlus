@@ -1,3 +1,18 @@
+// Bobcat Plus popup script.
+//
+// Two-phase load:
+//   1. getSchedule — returns raw Banner calendar events (crn, subject,
+//      courseNumber, start, end only; no room/building data).
+//   2. getRegisteredSectionMeta — background handler calls searchCourse
+//      for each unique (subject, courseNumber) and returns a
+//      {[crn]: {building, room}} map drawn from meetingsFaculty[0].meetingTime.
+//
+// formatPopupLocation uses that map to show "<BLDG> <room>" (leading zeros
+// stripped), "Online" for ARR entries, and "--" when no data is found.
+//
+// Pure helpers (normalizeRoom, formatPopupLocation, extractMetaFromSection)
+// are unit-tested in tests/unit/popupLocation.test.js without a browser.
+
 const $ = (id) => document.getElementById(id);
 
 const EMPTY_REG_RECOVER_KEY = "bpRegEmptyRecover:";
@@ -94,12 +109,27 @@ function loadSchedule(term) {
       sessionStorage.removeItem(EMPTY_REG_RECOVER_KEY + term);
     } catch (_) {}
     planBtnMode = "plan";
-    renderMiniCalendar(data);
-    $("planBtn").textContent = "Plan Semester";
+    // Fetch building+room for each registered CRN, then render.
+    const seen = new Set();
+    const courses = [];
+    for (const ev of data) {
+      const crn = String(ev.crn || "");
+      if (crn && !seen.has(crn)) {
+        seen.add(crn);
+        courses.push({ crn, subject: ev.subject || "", courseNumber: ev.courseNumber || "" });
+      }
+    }
+    chrome.runtime.sendMessage(
+      { action: "getRegisteredSectionMeta", term, courses },
+      (sectionMeta) => {
+        renderMiniCalendar(data, sectionMeta || {});
+        $("planBtn").textContent = "Plan Semester";
+      }
+    );
   });
 }
 
-function renderMiniCalendar(events) {
+function renderMiniCalendar(events, sectionMeta) {
   const days = ["Mon", "Tue", "Wed", "Thu", "Fri"];
   const buckets = [[], [], [], [], []];
 
@@ -127,6 +157,7 @@ function renderMiniCalendar(events) {
       courseKey: event.subject + event.courseNumber,
       begin: startTime,
       end: endTime,
+      location: formatPopupLocation(event, sectionMeta),
     });
   }
 
@@ -149,6 +180,8 @@ function renderMiniCalendar(events) {
         formatTime12(c.begin) +
         "-" +
         formatTime12(c.end) +
+        "<br>" +
+        c.location +
         "</div>";
     });
     if (bucket.length === 0) html += "&nbsp;";
@@ -156,6 +189,29 @@ function renderMiniCalendar(events) {
   });
   html += "</tr></table>";
   $("miniCalendar").innerHTML = html;
+}
+
+function formatPopupLocation(event, sectionMeta) {
+  const normalizeRoom = (roomRaw) => {
+    const room = String(roomRaw || "").trim();
+    if (!room) return "";
+    // All-letter rooms like "ARR" stay as-is (Arranged → show as-is, filtered below)
+    if (/^[A-Za-z]+$/.test(room)) return room.toUpperCase();
+    const stripped = room.replace(/^0+/, "");
+    return stripped || "0";
+  };
+
+  const crn = String(event.crn || "");
+  const meta = sectionMeta && crn ? sectionMeta[crn] : null;
+  const buildingCode = String(meta?.building || "").trim().toUpperCase();
+  const room = normalizeRoom(meta?.room || "");
+
+  // "ARR" means arranged/online — no fixed classroom
+  if (buildingCode === "ARR" || room === "ARR") return "Online";
+  if (buildingCode && room) return buildingCode + " " + room;
+  if (buildingCode) return buildingCode;
+  if (room) return room;
+  return "--";
 }
 
 function formatTime12(t) {

@@ -10,9 +10,28 @@ matters (refactor target: entrypoints stay **O(200) lines**).
 
 | File | Lines (approx) | Role |
 | ---- | --------------: | ---- |
-| `extension/background.js` | 224 | ES module service worker: side-effect imports for `self.BPReq` / `self.BPPerf`, `import` from `bg/*`, `onMessage` router, `runAnalysis` orchestration, `analysisGeneration` stale-run guard. |
+| `extension/background.js` | ~260 | ES module service worker: side-effect imports for `self.BPReq` / `self.BPPerf`, `import` from `bg/*`, `onMessage` router, `runAnalysis` orchestration, `analysisGeneration` stale-run guard. Also handles `getRegisteredSectionMeta` — building+room lookup for popup via `searchCourse`. |
 | `extension/tab.js` | 212 | ES module tab shell: imports `tab/*`, boot IIFE, term `<select>` handler, `?login=1` toolbar handoff. |
 | `extension/manifest.json` | — | MV3; `background.type: "module"`. |
+| `extension/tab.html` | — | `<script type="module" src="tab.js">` plus classic scripts for `courseColors`, `facultyScraper`, `scheduleGenerator` (run first — they attach `window.BP` and helpers). |
+| `extension/popup.html` + `popup.js` | — | Toolbar popup: renders mini weekly calendar with course code, time, and building+room location (fetched via `getRegisteredSectionMeta`); opens full tab. |
+
+### Tab page styles (`extension/css/`)
+
+Single cascade split for maintainability. **`tab.html` link order is authoritative** (same as former monolithic `tab.css` top-to-bottom).
+
+| File (load order) | Role |
+| ----------------- | ---- |
+| `tab-base.css` | Reset, `:root` tokens, `body` |
+| `tab-shell.css` | Top bar, hamburger, sidebar, `.main` |
+| `tab-calendar.css` | Calendar panel, week grid, course/calendar blocks, chips |
+| `tab-right-column.css` | Right column: overview, saved schedules, manual builder |
+| `tab-chat.css` | Chat + status bar |
+| `tab-modal.css` | Modal overlay + `.modal-body` base (course shell: Simone block in `tab-lists-plans.css`) |
+| `tab-build-ai.css` | Build section toggles, zoom/import/block chrome, resize, mode tabs, build + AI panels |
+| `tab-lists-plans.css` | Online courses bar, avoid-day, block buttons, eligible, plans, TXST, **Simone** course modal |
+| `tab-responsive.css` | `max-width` media queries |
+| `tab-dark.css` | `prefers-color-scheme: dark` (single block) |
 | `extension/tab.html` | — | `<script type="module" src="tab.js">` plus classic scripts for `courseColors`, `facultyScraper` (run first — they attach `window.BobcatFaculty` / `getChipForCourse`). `scheduleGenerator.js` removed in C6; `tab/*` now import directly from `scheduler/*`. |
 | `extension/popup.html` + `popup.js` | — | Toolbar popup; mostly opens full tab. |
 

@@ -47,8 +47,8 @@ Banner session cookie but not a JS heap. See [`docs/architecture.md`](docs/archi
 | ---- | ----- |
 | New Banner fetch | [`docs/invariants.md`](docs/invariants.md) #1 and #3; `bg/session.js`, `bg/bannerApi.js` |
 | Eligible list / needed courses | `BPReq.deriveEligible` in `requirements/txstFromAudit.js` (not legacy `findNeeded` except fallback) |
-| New UI section | `tab.html`, `tab.css`, wire in `tab/*` — follow existing layout tokens (CSS custom properties) |
-| New chip color | `courseColors.js` + `tab.css` class |
+| New UI section | `tab.html`, `extension/css/tab-*.css` (load order in `tab.html`; see `docs/file-map.md`), wire in `tab/*` — follow existing layout tokens (CSS custom properties) |
+| New chip color | `courseColors.js` + `tab-calendar.css` / `tab-lists-plans.css` chip class |
 
 ---
 
