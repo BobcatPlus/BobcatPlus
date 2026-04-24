@@ -304,8 +304,14 @@ body {
   letter-spacing: 0.2px;
   padding: 3px 5px;
   pointer-events: none;
-  overflow: visible;
+  overflow: hidden;
   z-index: 0;
+}
+.calendar-block .block-label-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .calendar .course-block {
@@ -315,15 +321,54 @@ body {
   padding: 4px 6px;
   border-radius: 7px;
   font-size: 10px;
-  overflow: visible;
+  /* Clip to the chip at max zoom-out (small --cell-h); avoids squashed glyphs spilling into adjacent cells */
+  overflow: hidden;
   z-index: 1;
   font-weight: 500;
   border-left-width: 2.5px;
   border-left-style: solid;
   cursor: pointer;
 }
+.calendar .course-block .block-info {
+  min-height: 0;
+  align-self: stretch;
+  /* Soft fade at the clip edge (reads as slightly transparent vs a hard cut) */
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    #000 0%,
+    #000 72%,
+    rgba(0, 0, 0, 0.72) 82%,
+    rgba(0, 0, 0, 0.28) 93%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    #000 0%,
+    #000 72%,
+    rgba(0, 0, 0, 0.72) 82%,
+    rgba(0, 0, 0, 0.28) 93%,
+    transparent 100%
+  );
+}
 .calendar .course-block .course-title {
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.calendar .course-block .course-title + .course-time {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Full course title (second .course-time): wrap when tall enough; clamp so overflow hides inside the chip */
+.calendar .course-block .course-title + .course-time + .course-time {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+  white-space: normal;
+  word-break: break-word;
 }
 .calendar .course-block .course-time {
   font-size: 9px;
