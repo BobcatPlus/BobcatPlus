@@ -1549,7 +1549,7 @@ ${JSON.stringify(compressed, null, 2)}
     return { label: topSchedule.label, tagline: topSchedule.tagline, picks, honored, unhonored };
   }
 
-  async function callRationales({ topSchedules, affinityScores, preferences, apiKey, trace }) {
+  async function callRationales({ topSchedules, affinityScores, preferences, ragChunks = [], apiKey, trace }) {
     if (!topSchedules.length) return [];
     const t = trace.start("rationale", "Writing rationales…");
     try {
