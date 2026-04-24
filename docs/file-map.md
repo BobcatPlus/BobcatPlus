@@ -10,11 +10,11 @@ matters (refactor target: entrypoints stay **O(200) lines**).
 
 | File | Lines (approx) | Role |
 | ---- | --------------: | ---- |
-| `extension/background.js` | 224 | ES module service worker: side-effect imports for `self.BPReq` / `self.BPPerf`, `import` from `bg/*`, `onMessage` router, `runAnalysis` orchestration, `analysisGeneration` stale-run guard. |
+| `extension/background.js` | ~260 | ES module service worker: side-effect imports for `self.BPReq` / `self.BPPerf`, `import` from `bg/*`, `onMessage` router, `runAnalysis` orchestration, `analysisGeneration` stale-run guard. Also handles `getRegisteredSectionMeta` — building+room lookup for popup via `searchCourse`. |
 | `extension/tab.js` | 212 | ES module tab shell: imports `tab/*`, boot IIFE, term `<select>` handler, `?login=1` toolbar handoff. |
 | `extension/manifest.json` | — | MV3; `background.type: "module"`. |
 | `extension/tab.html` | — | `<script type="module" src="tab.js">` plus classic scripts for `courseColors`, `facultyScraper`, `scheduleGenerator` (run first — they attach `window.BP` and helpers). |
-| `extension/popup.html` + `popup.js` | — | Toolbar popup; mostly opens full tab. |
+| `extension/popup.html` + `popup.js` | — | Toolbar popup: renders mini weekly calendar with course code, time, and building+room location (fetched via `getRegisteredSectionMeta`); opens full tab. |
 
 ### Tab page styles (`extension/css/`)
 

@@ -144,6 +144,42 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.action === "getRegisteredSectionMeta") {
+    // Popup-only: look up building+room for a list of registered CRNs.
+    // courses = [{crn, subject, courseNumber}], term = term code.
+    // Returns {[crn]: {building, room}} — missing entries mean no data found.
+    const { term, courses } = message;
+    if (!term || !Array.isArray(courses) || courses.length === 0) {
+      sendResponse({});
+      return true;
+    }
+    (async () => {
+      const meta = {};
+      // Deduplicate by subject+courseNumber to minimise Banner calls.
+      const seen = new Set();
+      for (const { crn, subject, courseNumber } of courses) {
+        const key = subject + "|" + courseNumber;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        try {
+          const sections = await searchCourse(subject, courseNumber, term);
+          if (!Array.isArray(sections)) continue;
+          for (const sec of sections) {
+            const secCrn = String(sec.courseReferenceNumber ?? sec.crn ?? "").trim();
+            if (!secCrn) continue;
+            const mf = Array.isArray(sec.meetingsFaculty) ? sec.meetingsFaculty[0] : null;
+            const mt = mf?.meetingTime || null;
+            const building = mt?.building || sec.building || "";
+            const room = mt?.room || mt?.roomNumber || sec.room || "";
+            if (building || room) meta[secCrn] = { building, room };
+          }
+        } catch (_) {}
+      }
+      sendResponse(meta);
+    })();
+    return true;
+  }
+
   if (message.action === "runAnalysisForTerm") {
     const myGen = ++analysisGeneration;
     const isCurrent = () => myGen === analysisGeneration;
