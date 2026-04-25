@@ -1,6 +1,6 @@
 # Rule-Shape Inventory
 
-Generated 2026-04-25 from **7 audits** (7 fixture files).
+Generated 2026-04-25 from **83 audits** (83 fixture files).
 Fixture root: `tests/fixtures/audits/`
 
 Parser column: ✅ = handled by current `txstFromAudit.js`; ⚠️ = falls through to default/OTHER.
@@ -9,71 +9,74 @@ Parser column: ✅ = handled by current `txstFromAudit.js`; ⚠️ = falls throu
 
 | Value | Audits | % audits | Occurrences | Parser |
 | --- | --- | --- | --- | --- |
-| `OTHER` | 7 | 100% | 25 | ✅ |
-| `DEGREE` | 7 | 100% | 7 | ✅ |
-| `MAJOR` | 6 | 86% | 6 | ✅ |
-| `MINOR` | 3 | 43% | 3 | ✅ |
-| `CONC` | 1 | 14% | 1 | ⚠️ unhandled |
+| `OTHER` | 83 | 100% | 275 | ✅ |
+| `DEGREE` | 83 | 100% | 83 | ✅ |
+| `MAJOR` | 80 | 96% | 80 | ✅ |
+| `CONC` | 9 | 11% | 9 | ⚠️ unhandled |
+| `MINOR` | 3 | 4% | 3 | ✅ |
 
 ## Rule `ruleType`
 
 | Value | Audits | % audits | Occurrences | Parser |
 | --- | --- | --- | --- | --- |
-| `Course` | 7 | 100% | 268 | ✅ |
-| `Group` | 7 | 100% | 31 | ✅ |
-| `Subset` | 6 | 86% | 26 | ✅ |
-| `Block` | 7 | 100% | 25 | ✅ |
-| `Complete` | 7 | 100% | 21 | ✅ |
-| `Blocktype` | 7 | 100% | 14 | ✅ |
-| `Incomplete` | 4 | 57% | 4 | ✅ |
+| `Course` | 83 | 100% | 2862 | ✅ |
+| `Block` | 83 | 100% | 277 | ✅ |
+| `Group` | 83 | 100% | 236 | ✅ |
+| `Complete` | 83 | 100% | 193 | ✅ |
+| `Subset` | 63 | 76% | 190 | ✅ |
+| `Blocktype` | 83 | 100% | 149 | ✅ |
+| `Incomplete` | 48 | 58% | 51 | ✅ |
+| `Noncourse` | 4 | 5% | 6 | ✅ |
 
 ## `qualifierArray[].code`
 
 | Value | Audits | % audits | Occurrences |
 | --- | --- | --- | --- |
-| `HIGHPRIORITY` | 6 | 86% | 25 |
-| `MINGRADE` | 2 | 29% | 20 |
-| `HIDERULE` | 3 | 43% | 15 |
-| `LOWESTPRIORITY` | 4 | 57% | 7 |
-| `NONEXCLUSIVE` | 4 | 57% | 7 |
-| `NOTGPA` | 1 | 14% | 5 |
-| `LOWPRIORITY` | 3 | 43% | 4 |
-| `EXCLUSIVE` | 2 | 29% | 3 |
+| `MINGRADE` | 31 | 37% | 184 |
+| `HIGHPRIORITY` | 56 | 67% | 171 |
+| `LOWESTPRIORITY` | 68 | 82% | 89 |
+| `NONEXCLUSIVE` | 36 | 43% | 59 |
+| `EXCLUSIVE` | 26 | 31% | 36 |
+| `MAXTERM` | 5 | 6% | 34 |
+| `LOWPRIORITY` | 22 | 27% | 28 |
+| `HIDERULE` | 12 | 14% | 24 |
+| `NOTGPA` | 2 | 2% | 6 |
+| `MINPERDISC` | 4 | 5% | 4 |
 
 ## `exceptionArray[].type`
 
 | Value | Audits | % audits | Occurrences |
 | --- | --- | --- | --- |
-| `RR` | 6 | 86% | 12 |
-| `AA` | 6 | 86% | 8 |
-| `NN` | 6 | 86% | 6 |
-| `AH` | 6 | 86% | 6 |
-| `FC` | 1 | 14% | 1 |
+| `RR` | 82 | 99% | 164 |
+| `AA` | 82 | 99% | 84 |
+| `NN` | 82 | 99% | 82 |
+| `AH` | 82 | 99% | 82 |
+| `FC` | 1 | 1% | 1 |
 
 ## Course array patterns
 
 | Value | Audits | % audits | Occurrences |
 | --- | --- | --- | --- |
-| `concrete` | 7 | 100% | 1258 |
-| `attrWildcard` | 7 | 100% | 381 |
-| `subjectWildcard` | 6 | 86% | 63 |
-| `attributePlaceholder` | 3 | 43% | 3 |
+| `concrete` | 83 | 100% | 12367 |
+| `attrWildcard` | 83 | 100% | 2900 |
+| `subjectWildcard` | 50 | 60% | 366 |
+| `attributePlaceholder` | 6 | 7% | 6 |
 
 ## `classCreditOperator` values
 
 | Value | Audits | % audits | Occurrences |
 | --- | --- | --- | --- |
-| `OR` | 7 | 100% | 266 |
-| `AND` | 2 | 29% | 2 |
+| `OR` | 83 | 100% | 2843 |
+| `AND` | 19 | 23% | 19 |
 
 ## `connector` values
 
 | Value | Audits | % audits | Occurrences |
 | --- | --- | --- | --- |
-| `,` | 7 | 100% | 231 |
-| `+` | 2 | 29% | 27 |
-| `AND` | 2 | 29% | 7 |
-| `OR` | 2 | 29% | 3 |
+| `,` | 83 | 100% | 2519 |
+| `+` | 26 | 31% | 304 |
+| `OR` | 12 | 14% | 23 |
+| `AND` | 6 | 7% | 16 |
 
 ## Structural flags
 
@@ -81,11 +84,11 @@ Presence counts — how many audits contain at least one instance.
 
 | Value | Audits | % audits | Occurrences |
 | --- | --- | --- | --- |
-| `hideFromAdvice:course` | 7 | 100% | 856 |
-| `withArray` | 7 | 100% | 397 |
-| `ifElsePart` | 7 | 100% | 133 |
-| `numberOfGroups` | 7 | 100% | 31 |
-| `numberOfRules` | 7 | 100% | 31 |
+| `hideFromAdvice:course` | 83 | 100% | 8142 |
+| `withArray` | 83 | 100% | 2995 |
+| `ifElsePart` | 83 | 100% | 1615 |
+| `numberOfGroups` | 83 | 100% | 236 |
+| `numberOfRules` | 83 | 100% | 236 |
 
 ## Unhandled shapes (S5 to-do list)
 
