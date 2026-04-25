@@ -1,1 +1,12 @@
 /.claude/worktrees
+
+# macOS metadata
+.DS_Store
+**/.DS_Store
+
+# Generated script output
+scripts/catalog/degree-combinations.json
+scripts/whatif/run.log
+
+# Scraped what-if audit fixtures (large + potentially sensitive)
+tests/fixtures/audits/whatif/
