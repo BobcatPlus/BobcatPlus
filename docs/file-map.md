@@ -109,3 +109,31 @@ Tab-only ESM modules. The AI + CSP pipeline — no `window.BP` globals.
 
 - `node tests/unit/run.js` — deterministic (no network). **Must stay green** on every change.
 - Optional: `OPENAI_API_KEY=… node tests/intent-fixture.js` — intent goldens.
+
+---
+
+## Offline tooling (`scripts/`)
+
+Local Node scripts that don't ship with the extension. Used for fixture
+collection, baseline regen, and the Phase 1.6 rule-shape discovery pipeline.
+None of these are imported by the extension at runtime.
+
+
+| Path                                | Role                                                                                                                                                                          |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scripts/generate-phase1-baseline.js` | Regenerate `docs/baselines/phase1-*.json` after parser/adapter changes.                                                                                                       |
+| `scripts/scheduleGenerator.js`        | Frozen Phase-0 reference scheduler kept for baseline diffs only — not the live pipeline (that lives under `extension/scheduler/`).                                            |
+| `scripts/catalog/scrape-majors.js`    | TXST course-catalog scraper. Emits `degree-combinations.json`. Defaults to all 4 catalog years; `--year YYYY-YYYY` for one year. No auth.                                     |
+| `scripts/catalog/map-dw-codes.js`     | Populates `dwMajorCode` / `dwConcCode` on the manifest by hitting DW's `validations/special-entities/majors-whatif` endpoint. Requires `~/.bobcatplus-dw-cookie`.              |
+| `scripts/catalog/README.md`           | Run procedure.                                                                                                                                                                |
+| `scripts/whatif/pull-audits.js`       | DW What-If audit driver. Reads the manifest, POSTs each combo to `api/audit`, writes JSON dumps under `tests/fixtures/audits/whatif/` (gitignored). Idempotent + rate-limited. |
+| `scripts/whatif/run.log`              | Per-call outcome log (`ok` / `invalid-combo` / `skipped` / `http-error`). Gitignored.                                                                                         |
+| `scripts/whatif/README.md`            | Run procedure + cookie setup.                                                                                                                                                 |
+| `scripts/shape/extract-shapes.js`     | Walks committed and gitignored audits, regenerates `docs/plans/rule-shape-inventory.md`.                                                                                      |
+
+
+**Storage policy (`.gitignore`):** the bulk what-if dump
+(`tests/fixtures/audits/whatif/`), the catalog manifest, the run log, and the
+DW cookie jar are not committed. Curated fixtures live in
+`tests/fixtures/audits/audit-*.json` (root) and the HAR captures from the T3
+DevTools session live in `tests/fixtures/audits/what-if/` (with the hyphen).

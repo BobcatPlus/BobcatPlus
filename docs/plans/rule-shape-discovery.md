@@ -1,19 +1,24 @@
 # Rule-Shape Discovery — design note (Phase 1.6, pre-RFC)
 
-**Status:** ⬜ *Planning.* Companion to `docs/plans/requirement-graph.md` —
-that doc designs the **model**; this doc designs the **discovery process** that
-tells us which model shapes are actually out there. Phase 1 parser already
-handles five `requirementType`s, four `ruleType`s semantically, and falls back
-gracefully on the rest; we need data-driven confidence that "the rest" is
-actually small before committing to a Phase 1.5 solver.
+**Status:** 🟢 *Discovery corpus complete — gate for Phase 1.5 is clear.*
+Companion to `docs/plans/requirement-graph.md` — that doc designs the
+**model**; this doc designs the **discovery process** that tells us which model
+shapes are actually out there. As of 2026-04-25 the full S1–S4 toolchain has
+shipped and the inventory has been regenerated against **312 audits** (309
+what-if across all four catalog years 2022–2026 + 3 seed fixtures). The 4-year
+corpus confirmed **no new `ruleType`, `requirementType`, or `qualifierArray.code`
+values** beyond what the 83-audit corpus already captured — all shapes are
+handled. S5 has landed `BLOCK_TYPE.CONC` in the parser. Known gaps in §5
+(advisor exceptions, ElsePart activation, Honors overlay) are S6 real-audit
+work tracked under SCRUM-35; they do not block the Phase 1.5 solver design.
 
-Grounded in three fixtures:
-`tests/fixtures/audits/audit-english-ba.json`,
-`audit-computerscience-bs-minor-music.json`, and
-`audit-marketing-major-focusOnSales-fashionMerchandising-minor.json`
-(the marketing one surfaced `requirementType: "CONC"`, not yet in
-`BLOCK_TYPE`). Three fixtures is not enough. This plan lays out how to get
-to ~800 audits across the 2022-2025 catalog years without hammering TXST IT.
+Original grounding (the seed fixtures): `audit-english-ba.json`,
+`audit-computerscience-bs-minor-music.json`,
+`audit-marketing-major-focusOnSales-fashionMerchandising-minor.json` (the
+marketing one surfaced `requirementType: "CONC"`). Three fixtures was not
+enough; the what-if dump now backs them with 80 more audits. Storage policy
+(.gitignore covers the bulk dump; only the seed fixtures are committed)
+matches §S3.
 
 ---
 
@@ -351,14 +356,14 @@ sprint, others sit in the backlog under the epic and get pulled forward
 as prior gates clear.
 
 
-| Jira task                                            | Phase  | Deliverable                                                                                                                     | Gate                                       |
-| ---------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
-| T1 — Write plan doc + index                          | —      | This file + README index row.                                                                                                   | ✅ closes with the commit adding this file. |
-| T2 — Catalog scraper                                 | **S1** | `scripts/catalog/scrape-majors.js` + `degree-combinations.json`.                                                                | ✅ Script written; run to generate manifest. DW code mapping (dwMajorCode) deferred to map-dw-codes.js (see README). |
-| T3 — DevTools reverse-engineer DW What-If            | **S2** | `docs/plans/whatif-endpoint.md`.                                                                                                | ✅ Completed from HAR sessions captured 2026-04-24. Two open items remain: invalid-combo signal test, true dual-degree shape. See §6 S3 checklist. |
-| T4 — What-If audit driver                            | **S3** | `scripts/whatif/pull-audits.js` + run log + gitignored dump.                                                                    | ✅ Script written. Requires `~/.bobcatplus-dw-cookie` + manifest from S1. |
-| T5 — Shape-extraction script + inventory             | **S4** | `scripts/shape/extract-shapes.js` + `docs/plans/rule-shape-inventory.md`.                                                       | Gated on T4.                               |
-| T6 — Data-model update + curated fixtures + baseline | **S5** | Extensions to `extension/requirements/`*, ~20 committed fixtures, regenerated Phase 1 baseline, updated `requirement-graph.md`. | Gated on T5.                               |
+| Jira task                                            | Phase  | Deliverable                                                                                                                     | Gate                                                                                                                                                                                                                                                              |
+| ---------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| T1 — Write plan doc + index                          | —      | This file + README index row.                                                                                                   | ✅ Closed by commit `2231681`.                                                                                                                                                                                                                                     |
+| T2 — Catalog scraper                                 | **S1** | `scripts/catalog/scrape-majors.js` + `degree-combinations.json`.                                                                | ✅ Script written + manifest generated across all four catalog years 2022–2026 (~640 programs). DW codes populated by `map-dw-codes.js`.                                                                                                                           |
+| T3 — DevTools reverse-engineer DW What-If            | **S2** | `docs/plans/whatif-endpoint.md`.                                                                                                | ✅ Notes complete from HAR sessions captured 2026-04-24. Two non-blocking items: invalid-combo signal test, true dual-degree shape.                                                                                                                                |
+| T4 — What-If audit driver                            | **S3** | `scripts/whatif/pull-audits.js` + run log + gitignored dump.                                                                    | ✅ Driver run over full 4-year manifest (2026-04-25): **309 ok**, 34 invalid-combo, 0 http-errors. 309 audit files in `tests/fixtures/audits/whatif/` (gitignored). By year: 2025-2026 × 82, 2024-2025 × 75, 2023-2024 × 76, 2022-2023 × 76.                     |
+| T5 — Shape-extraction script + inventory             | **S4** | `scripts/shape/extract-shapes.js` + `docs/plans/rule-shape-inventory.md`.                                                       | ✅ Inventory regenerated over **312 audits** (309 what-if + 3 seed). 4-year corpus confirmed no new ruleType / requirementType / qualifier codes — all shapes handled.                                                                                             |
+| T6 — Data-model update + curated fixtures + baseline | **S5** | Extensions to `extension/requirements/`*, ~20 committed fixtures, regenerated Phase 1 baseline, updated `requirement-graph.md`. | 🟡 Partial: `BLOCK_TYPE.CONC` + `inferBlockType` shipped in `1658273`. **Outstanding:** `IfStmtNode`/`IfPartNode`/`ElsePartNode` triad (latent correctness bug — current parser drops ElsePart silently); ~20 curated committed fixtures; regen Phase 1 baseline. |
 
 
 Phase S6 ongoing real-audit backfill is tracked on SCRUM-35's existing
@@ -368,18 +373,18 @@ Phase S6 ongoing real-audit backfill is tracked on SCRUM-35's existing
 
 ## 9. Concrete next steps, in order
 
-1. **Commit this plan.** ✅ Done.
-2. **Open Jira epic + child tasks** per §8. ✅ Done.
-3. **T3 complete** — `docs/plans/whatif-endpoint.md` written from HAR sessions
-  captured 2026-04-24. Two items still open (invalid-combo signal, true
-  dual-degree). See `whatif-endpoint.md` §6 S3 checklist.
-4. **T2 complete** — `scripts/catalog/scrape-majors.js` written.
-  Run `node scripts/catalog/scrape-majors.js` to generate the manifest,
-  then `node scripts/catalog/map-dw-codes.js` (to be written) to populate
-  DW Banner codes.
-5. **T4 complete** — `scripts/whatif/pull-audits.js` written.
-  Populate `~/.bobcatplus-dw-cookie`, run S1 + `map-dw-codes.js`, then
-  `node scripts/whatif/pull-audits.js --dry-run --limit=5` to smoke-test.
-6. **Next: T5** — write `scripts/shape/extract-shapes.js`.  Gate: S3 dump
-  present (at least one catalog year).  See §4 S4.
+T1–T5 all ✅ (including 4-year corpus widening, confirmed clean 2026-04-25).
+T6 partially landed (`BLOCK_TYPE.CONC`); ElsePart triad + curated fixture set
+still open.
+
+**Discovery gate for Phase 1.5 is clear.** The 312-audit corpus (all four
+catalog years 2022–2026, 309 ok + 3 seed) produced no new shapes. Phase 1.5
+(SCRUM-35) may open now.
+
+What's left for T6, in priority order:
+
+1. **Land the `IfStmt`/`IfPart`/`ElsePart` node triad in `extension/requirements/graph.js` + `txstFromAudit.js`.** The current `convertIfStmt` keeps `IfPart` and silently discards `ElsePart`; with `ifElsePart` showing 4733 occurrences across all 312 audits, that shortcut is a latent correctness bug for any student whose `ElsePart` branch fires (e.g., transfer credit). Deferred to S6 / SCRUM-35 real-audit backfill; does not block Phase 1.5 solver design.
+2. **Curate ~20 committed fixtures from the gitignored what-if dump.** Selection rule: every `ruleType`, every `qualifierArray.code`, and every `exceptionArray.type` in the inventory is exercised by at least one committed fixture. Add one double-major + one dual-degree fixture once T3 §6 dual-degree shape is verified.
+3. **Regenerate the Phase 1 baseline** against the new committed fixture set (`scripts/generate-phase1-baseline.js`), commit alongside.
+4. **Open Phase 1.5 (SCRUM-35) RFC** with the 312-audit inventory as input.
 

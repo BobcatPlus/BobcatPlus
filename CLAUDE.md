@@ -110,9 +110,9 @@ Keep it ≤8 lines. Receipt for the next contributor, not a report.
 
 ## Branch + deploy
 
-- `main` — stable; ships to the Chrome Web Store.  
-- `Demo` — external demos.  
-- `scheduler-refactor` — scheduleGenerator.js split into `scheduler/`*; ready to merge (retrospective at `docs/postmortems/scheduler-refactor.md`).
+- `main` — stable; ships to the Chrome Web Store. (scheduler-refactor merged at `0e67756`; retrospective at `docs/postmortems/scheduler-refactor.md`.)
+- `Demo` — external demos.
+- `rule-shape-discovery` — Phase 1.6 (SCRUM-48): catalog scraper, DW What-If driver, shape extractor, 312-audit inventory (4 catalog years, no new shapes), parser learns `BLOCK_TYPE.CONC`. Plan: `docs/plans/rule-shape-discovery.md`. Discovery gate clear; ready to merge.
 
 Milestones merge via PR. Prefer `git revert` for rollback (D17); feature flags
 only when a phase needs shadow mode, then remove.
