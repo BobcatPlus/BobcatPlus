@@ -1,12 +1,27 @@
-# RequirementGraph — design note (Phase 1 + 1.5 open questions)
+# RequirementGraph — design note
 
-**Status:** ✅ **Phase 1 shipped** (`0cbceb6`, D2 / D17). The parser lives in
-`extension/requirements/{graph,txstFromAudit,wildcardExpansion}.js`; `deriveEligible`
-produces the legacy flat shape for the current solver. **Phase 1.5 (graph-native
-solver, ChooseN + many-to-many) remains open** — the design sections below and the
-"Open design questions" list are the working notes for that phase. Everything
-marked *pre-ship* below is preserved as historical rationale; anywhere this doc
-contradicts live code, code wins and this doc must be updated.
+**Status:** ✅ **Parser shipped** (`0cbceb6`, D2 / D17). The parser lives in
+`extension/requirements/{graph,txstFromAudit,wildcardExpansion}.js`;
+`deriveEligible` produces the legacy flat shape for the current solver.
+**Graph-aware Scheduler track (formerly "Phase 1.5") remains open** —
+design sections below and the "Open design questions" list are the
+working notes for that track.
+
+Position in the layered model (D27, 2026-04-25):
+
+- **L0** This file — RequirementGraph parser. ✅ shipped.
+- **L1** Per-leaf `applied[]` overlay. ✅ shipped (inside the parser output).
+- **L2** Course Catalog — prereq DAG, seasonality, programs, co-reqs.
+  See [`course-catalog.md`](course-catalog.md). ⬜ open.
+- **L3** Single-term solver — consumes L0+L1+L2. The "Graph-aware
+  Scheduler" track is the work to teach the existing solver to consume
+  the catalog and to reason about ChooseN / many-to-many natively.
+- **L4-L5** Forward Planner — multi-semester planning over L0-L3.
+  See [`forward-planner.md`](forward-planner.md). ⬜ open.
+
+Anything below marked *pre-ship* is preserved as historical rationale;
+anywhere this doc contradicts live code, code wins and this doc must be
+updated.
 
 Scope: **Texas State University** DegreeWorks audits only (D3). No adapter interface
 until university #2 ships.
@@ -268,16 +283,9 @@ sibling courses at a time".
   and `creditsBegin` are present, does "OR" mean either threshold satisfies? Working
    assumption: yes, OR → min(classes, credits-equivalent) counts. Confirm via the
    CS BS audit where engineering-style credit-hour rules are common.
-3. `**ifElsePart: "IfPart" | "ElsePart"`** — conditional rule branches. **Resolved
-  empirically:** the rule-shape inventory (2026-04-25, 83 audits) reports 1615
-   `ifElsePart` occurrences across 100% of audits — it is the most pervasive
-   structural feature in DW output, not a rare edge case. Current
-   `convertIfStmt` keeps `IfPart` and silently drops `ElsePart`, which is a
-   latent correctness bug because what-if audits never mark `ElsePart` as
-   satisfied (fresh-student simulation), but real audits will once a transfer-
-   credit / AP-CLEP / waiver fires the else branch. Phase 1.5 must replace the
-   shortcut with an `IfStmtNode` / `IfPartNode` / `ElsePartNode` triad. Tracked
-   in `docs/plans/rule-shape-discovery.md` §9 step 1.
+3. `**ifElsePart: "IfPart" | "ElsePart"*`* — conditional rule branches. Rare in this
+  audit. Likely tied to transfer credit / test credit / catalog-year switches. Need a
+   second audit to see a real example before designing.
 4. **Attribute resolution without catalog attributes.** If the concrete fallback courses
   listed under `@@ with ATTRIBUTE=xxx` prove insufficient in testing, we need a Banner
    endpoint that surfaces section attributes. Investigation task, not blocking Phase 1.

@@ -1,102 +1,92 @@
 # Bobcat Plus — documentation index
 
-**Read order (humans and LLMs):** load the smallest context first, then branch
-by task. Deeper content lives in linked files — do not duplicate long tables
-in chat.
+Read order is **load smallest context first**. Deeper content lives in
+linked files; do not duplicate long tables in chat or in this index.
 
-1. `[../CLAUDE.md](../CLAUDE.md)` — router: contexts, where to read next, rules, session hygiene.
-2. `[../HANDOFF.md](../HANDOFF.md)` — what's next, phases, short commit pointers.
-3. `[decisions.md](decisions.md)` — **tiebreaker** ADR log (architecture/product only); if any doc disagrees, this wins.
+## Load priority
 
----
+| Tier | Always read | When |
+| --- | --- | --- |
+| **T1** | [`../CLAUDE.md`](../CLAUDE.md), [`../compass.md`](../compass.md), [`decisions.md`](decisions.md) (active) | Every session. |
+| **T2** | [`architecture.md`](architecture.md), [`invariants.md`](invariants.md), the relevant [`plans/*`](plans/) | When working in the phase those docs describe. |
+| **T3** | [`postmortems/`](postmortems/), [`decisions-archive.md`](decisions-archive.md) | Only when you need historical context. |
 
-## Core reference (refactored `extension/`)
-
-
-| Doc                                  | One-line role                                                                                                                |
-| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| `[architecture.md](architecture.md)` | Two JS contexts, eligible + v3 AI pipelines, external systems, cache contract, v3 diagram.                                   |
-| `[invariants.md](invariants.md)`     | Non-negotiables (session mutex, `bail()`, pool+timeout, affinity wipe, Jaccard, `validateSchedule`, `addToWorkingSchedule`). |
-| `[file-map.md](file-map.md)`         | `bg/`*, `tab/*`, entrypoints, pure `requirements/*` + `performance/*` — *where* to edit.                                     |
-| `[METRICS.md](METRICS.md)`           | Phase-0 metric formulas (`honoredRate`, `archetypeDistance`, etc).                                                           |
-| `[open-bugs.md](open-bugs.md)`       | Pointer into Jira + in-repo bug diagnoses.                                                                                   |
-
+If anything below contradicts [`decisions.md`](decisions.md), decisions
+wins.
 
 ---
 
-## Decisions and process
+## Core reference
 
+| Doc | One-line role |
+| --- | --- |
+| [`architecture.md`](architecture.md) | Two JS contexts, eligible + v3 AI pipelines, external systems, cache contract, v3 diagram. |
+| [`invariants.md`](invariants.md) | Non-negotiables (session mutex, `bail()`, pool+timeout, affinity wipe, Jaccard, `validateSchedule`, `addToWorkingSchedule`). |
+| [`METRICS.md`](METRICS.md) | Phase-0 metric formulas (`honoredRate`, `archetypeDistance`, etc). |
+| [`open-bugs.md`](open-bugs.md) | Pointer into Jira + in-repo bug diagnoses. |
 
-| Doc                                  | Role                                                                                      |
-| ------------------------------------ | ----------------------------------------------------------------------------------------- |
-| `[decisions.md](decisions.md)`       | Append-only ADRs (architecture/product). Never split a decision into a new file.          |
-| `[process.md](process.md)`           | Meta-process rules (plan-doc workflow, gates, model routing). Extracted from the ADR log. |
-| `[CONTRIBUTING.md](CONTRIBUTING.md)` | How to add docs; new markdown must be indexed here or in `CLAUDE.md`.                     |
+## Decisions
 
+| Doc | Role |
+| --- | --- |
+| [`decisions.md`](decisions.md) | Append-only ADRs (architecture/product). Active entries (D17 onward). |
+| [`decisions-archive.md`](decisions-archive.md) | Older ADRs (D2–D14). Read only when you need history. |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to add docs. New markdown must be indexed here or in `CLAUDE.md`. |
 
----
+## Plans (RFCs)
 
-## Plans (future / in-progress design)
+Tracks live in [`../compass.md`](../compass.md). Each plan below is the
+detailed RFC for one track — read the plan when you're working in that
+area, the compass for the bird's-eye view.
 
+| Track | Plan |
+| --- | --- |
+| Graduation Tracker MVP — header strip, ships independent | [`plans/grad-tracker.md`](plans/grad-tracker.md) |
+| Course Catalog (L2) — bundled prereq DAG + seasonality + refresh | [`plans/course-catalog.md`](plans/course-catalog.md) |
+| Graph-aware Scheduler — solver consumes Catalog, ChooseN, many-to-many UX | [`plans/requirement-graph.md`](plans/requirement-graph.md) |
+| Forward Planner — multi-semester, pace slider, drag-and-replan deferred | [`plans/forward-planner.md`](plans/forward-planner.md) |
+| Advising flow — pre-advising questions + advisor brief | [`plans/advising-flow.md`](plans/advising-flow.md) |
 
-| Doc                                                                    | Role                                                                                              |
-| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `[plans/requirement-graph.md](plans/requirement-graph.md)`             | `RequirementGraph` parser (Phase 1 shipped) + Phase 1.5 open questions.                           |
-| `[plans/advising-flow.md](plans/advising-flow.md)`                     | Phases 4a / 4b / 5 product shape (advisor brief, multi-term planner).                             |
-| `[plans/rule-shape-discovery.md](plans/rule-shape-discovery.md)`       | Phase 1.6 — how to get ~800 what-if audits for rule-shape inventory (S0–S6 plan).                 |
-| `[plans/whatif-endpoint.md](plans/whatif-endpoint.md)`                 | DW What-If endpoint reverse-engineering notes (T3 / S2). Gate doc for pull-audits.js driver (S3). |
-| `[plans/rule-shape-inventory.md](plans/rule-shape-inventory.md)`       | T5 / S4 output — counts of every requirementType, ruleType, qualifier, exception across all fixtures. Regen: `node scripts/shape/extract-shapes.js`. |
+Tree-style requirement visualization is speculative; tracked in compass
+and Jira, no plan doc yet.
 
+## Open bug diagnoses ([`bugs/`](bugs/))
 
----
+| Doc | Status |
+| --- | --- |
+| [`bugs/scrum-63-eligible.md`](bugs/scrum-63-eligible.md) | A/B/C shipped; live-verify pending |
+| [`bugs/scrum-79-import-ux.md`](bugs/scrum-79-import-ux.md) | Deferred |
+| [`bugs/scrum-47-plans-empty.md`](bugs/scrum-47-plans-empty.md) | Open |
+| [`bugs/scrum-80-session-expired-status-bar.md`](bugs/scrum-80-session-expired-status-bar.md) | Open |
 
-## Open bug diagnoses (`[bugs/](bugs/)`)
+## Postmortems ([`postmortems/`](postmortems/))
 
-In-repo diagnoses only exist when a bug has a non-obvious failure mode.
-Status, priority, and triage live in Jira.
+Historical record. Don't edit — append a one-line correction only if a
+claim turned out to be wrong.
 
-
-| Doc                                                                                        | Status                                |
-| ------------------------------------------------------------------------------------------ | ------------------------------------- |
-| `[bugs/bug4-eligible.md](bugs/bug4-eligible.md)`                                           | 🟡 A/B/C shipped; live-verify pending |
-| `[bugs/bug6-import-ux.md](bugs/bug6-import-ux.md)`                                         | 🟡 Deferred                           |
-| `[bugs/bug9-plans-empty-after-term-switch.md](bugs/bug9-plans-empty-after-term-switch.md)` | 🟡 Open                               |
-| `[bugs/bug10-session-expired-status-bar.md](bugs/bug10-session-expired-status-bar.md)`     | 🟡 Open                               |
-
-
----
-
-## Postmortems (`[postmortems/](postmortems/)`)
-
-Historical record of closed issues and completed refactors. Do not edit —
-append a one-line correction only if a claim turned out to be wrong.
-
-
-| Doc                                                                                                      | Notes                                                         |
-| -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| `[postmortems/refactor-on-main-split.md](postmortems/refactor-on-main-split.md)`                         | ES module split of `background.js` + `tab.js` (9/9 complete). |
-| `[postmortems/bug1-morning-preference.md](postmortems/bug1-morning-preference.md)`                       | Shipped `5975c90` (D14).                                      |
-| `[postmortems/bug5-online-conflict.md](postmortems/bug5-online-conflict.md)`                             | Shipped `fda436e` (D12).                                      |
-| `[postmortems/bug8-banner-half-auth-login-popup.md](postmortems/bug8-banner-half-auth-login-popup.md)`   | Shipped with D19.                                             |
-| `[postmortems/bug11-post-saml-degreeworks-warmup.md](postmortems/bug11-post-saml-degreeworks-warmup.md)` | D22 + D23.                                                    |
-
-
----
+| Doc | Notes |
+| --- | --- |
+| [`postmortems/scheduler-refactor.md`](postmortems/scheduler-refactor.md) | `scheduleGenerator.js` → `scheduler/*` split (D25). |
+| [`postmortems/refactor-on-main-split.md`](postmortems/refactor-on-main-split.md) | ES module split of `background.js` + `tab.js`. |
+| [`postmortems/bug1-morning-preference.md`](postmortems/bug1-morning-preference.md) | Shipped `5975c90` (D14). |
+| [`postmortems/bug5-online-conflict.md`](postmortems/bug5-online-conflict.md) | Shipped `fda436e` (D12). |
+| [`postmortems/bug8-banner-half-auth-login-popup.md`](postmortems/bug8-banner-half-auth-login-popup.md) | Shipped with D19. |
+| [`postmortems/bug11-post-saml-degreeworks-warmup.md`](postmortems/bug11-post-saml-degreeworks-warmup.md) | D22 + D23. |
 
 ## Baselines
 
-
-| Path                                                                   | Role                                                                                                       |
-| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `[baselines/phase1-2026-04-21.json](baselines/phase1-2026-04-21.json)` | Phase-1 adapter snapshot; regen via `scripts/generate-phase1-baseline.js` when the parser/adapter changes. |
-
+| Path | Role |
+| --- | --- |
+| [`baselines/phase1-2026-04-21.json`](baselines/phase1-2026-04-21.json) | Phase-1 adapter snapshot; regen via `scripts/generate-phase1-baseline.js` when the parser/adapter changes. |
 
 ---
 
 ## Intentionally not duplicated here
 
 - **Per-module "what the code does"** — top-of-file comments in
-`extension/`** (e.g. `requirements/wildcardExpansion.js`,
-`performance/concurrencyPool.js`, `bg/analysis.js`, `tab/auth.js`).
-- **Commit narratives** — git history; use `decisions.md` for durable *why*.
-- **Live bug triage** — Jira; `open-bugs.md` is a pointer.
+  `extension/` (e.g. `requirements/wildcardExpansion.js`,
+  `performance/concurrencyPool.js`, `bg/analysis.js`, `tab/auth.js`).
+- **Commit narratives** — git history; use [`decisions.md`](decisions.md)
+  for durable *why*.
+- **Live bug triage** — Jira; [`open-bugs.md`](open-bugs.md) is a pointer.
+- **Pattern-pinned coding rules for AI agents** — `.cursor/rules/` (auto-loaded).
