@@ -78,7 +78,7 @@ function popupEmptyScheduleHtml() {
     $("termSelect")?.selectedOptions?.[0]?.textContent || "";
   if (/\(view only\)/i.test(desc)) {
     return (
-      '<div class="no-schedule">No Banner meetings for this View Only term — pick it in TXST registration first, then open the planner.</div>'
+      '<div class="no-schedule">No Banner meetings for this View Only term - pick it in TXST registration first, then open the planner.</div>'
     );
   }
   return (
@@ -93,8 +93,9 @@ function loadSchedule(term) {
   chrome.runtime.sendMessage({ action: "getSchedule", term: term }, (data) => {
     if (data === null) {
       planBtnMode = "login";
-      $("miniCalendar").innerHTML =
-        '<div class="no-schedule">Could not load registration — open the planner tab and tap Login.</div>';
+      const _bpRegNullHtml =
+        '<div class="no-schedule">Could not load registration.<br>Tap "Login" to view your schedule.</div>';
+      $("miniCalendar").innerHTML = _bpRegNullHtml;
       $("planBtn").textContent = "Login";
       return;
     }
