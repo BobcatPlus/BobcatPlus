@@ -4,9 +4,9 @@ Bobcat Plus is a Chrome extension (Manifest V3) with **two JavaScript
 execution contexts** that must not import each other’s code:
 
 
-| Context        | Entry                        | Network role                                                                                                                                       |
-| -------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Service worker | `extension/background.js`    | DegreeWorks API, Banner SSB, `chrome.storage.local` (via `bg/cache.js`).                                                                           |
+| Context        | Entry                        | Network role                                                                                                                                                |
+| -------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Service worker | `extension/background.js`    | DegreeWorks API, Banner SSB, `chrome.storage.local` (via `bg/cache.js`).                                                                                    |
 | Tab page       | `extension/tab.js` → `tab/`* | UI; **OpenAI** Chat Completions for the v3 pipeline (`extension/scheduler/`*, user-supplied key); `chrome.runtime.sendMessage` to the worker only. |
 
 
@@ -18,7 +18,8 @@ separate isolates. All cross-context work is message-based.
 `extension/bg/`* (service worker) and `extension/tab/`* (page). Entry files
 stay thin: `background.js` (~~224 lines) is the `onMessage` router + analysis
 generation counter; `tab.js` (~~212 lines) boots the page and handles term
-change. See `[file-map.md](file-map.md)`.
+change. Browse `extension/` directly for module layout — every module has a
+top-of-file comment explaining its role.
 
 ---
 
@@ -117,12 +118,12 @@ solver). Invariants: `[invariants.md](invariants.md)`.
 ## External systems
 
 
-| System              | Base (typical)                                                                                      | Auth / notes            |
-| ------------------- | --------------------------------------------------------------------------------------------------- | ----------------------- |
-| DegreeWorks         | `https://dw-prod.ec.txstate.edu/responsiveDashboard/api`                                            | TXST session cookie     |
-| Banner registration | `https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb`                                        | TXST session cookie     |
+| System              | Base (typical)                                                                                   | Auth / notes            |
+| ------------------- | ------------------------------------------------------------------------------------------------ | ----------------------- |
+| DegreeWorks         | `https://dw-prod.ec.txstate.edu/responsiveDashboard/api`                                         | TXST session cookie     |
+| Banner registration | `https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb`                                     | TXST session cookie     |
 | OpenAI              | `https://api.openai.com/v1/chat/completions` (called from `scheduler/llm/openai.js` in the **tab**) | API key in page context |
-| Rate My Professor   | GraphQL (via `facultyScraper.js`)                                                                   | None (public)           |
+| Rate My Professor   | GraphQL (via `facultyScraper.js`)                                                                | None (public)           |
 
 
 `manifest.json` also lists `https://ml3392.app.n8n.cloud/`* — there is **no

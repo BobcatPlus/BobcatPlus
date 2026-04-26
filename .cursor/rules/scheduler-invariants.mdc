@@ -1,0 +1,28 @@
+---
+description: Hard rules when editing the v3 hybrid scheduler pipeline.
+globs: extension/scheduler/**/*.js
+alwaysApply: false
+---
+
+# Scheduler invariants
+
+These rules are load-bearing. Breaking any of them produces silent
+correctness regressions that the test suite won't fully catch.
+
+- **Wipe the affinity cache at the start of every `handleUserTurn`.**
+  `affinityCache.clear()` is the first line. The cache is a per-turn
+  optimization, not a per-session one. Carrying it across turns produces
+  affinity scores from a stale prompt.
+- **`pickTop3` is tiered Jaccard on course sets, not section signatures.**
+  Don't reduce it to `signature(scheduleA) === signature(scheduleB)`.
+  The tiers are what produce visible variety in the top-3.
+- **`validateSchedule` firing means the solver produced an invalid
+  schedule.** It's a solver bug, not a UI nag. Don't silence it; fix the
+  generator.
+- **Solver math is deterministic.** The LLM stages frame the problem
+  (intent, affinity, rationale) but never decide which schedule wins.
+  Anywhere a satisfaction question can be computed from the
+  `RequirementGraph`, compute it; don't ask an LLM.
+- See [`docs/invariants.md`](../../docs/invariants.md) and
+  [`docs/architecture.md`](../../docs/architecture.md) for the full
+  contract.
