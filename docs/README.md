@@ -50,6 +50,18 @@ area, the compass for the bird's-eye view.
 Tree-style requirement visualization is speculative; tracked in compass
 and Jira, no plan doc yet.
 
+## Rule-shape & What-If (Phase 1.6 / discovery)
+
+Lives alongside the path-to-graduation plans above. These docs drive the
+`scripts/catalog/*`, `scripts/whatif/*`, and `scripts/shape/*` tooling
+(`pull-audits.js`, `extract-shapes.js`, `map-dw-codes.js`, `scrape-majors.js`).
+
+| Plan | Role |
+| --- | --- |
+| [`plans/rule-shape-discovery.md`](plans/rule-shape-discovery.md) | How to get ~800 what-if audits for rule-shape inventory (S0–S6). |
+| [`plans/whatif-endpoint.md`](plans/whatif-endpoint.md) | DW What-If reverse-engineering (T3 / S2); gate for the audit driver. |
+| [`plans/rule-shape-inventory.md`](plans/rule-shape-inventory.md) | T5 / S4 inventory output; regen: `node scripts/shape/extract-shapes.js`. |
+
 ## Open bug diagnoses ([`bugs/`](bugs/))
 
 | Doc | Status |
