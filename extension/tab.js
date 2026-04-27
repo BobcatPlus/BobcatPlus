@@ -19,6 +19,7 @@ import {
 } from "./tab/overview.js";
 import {
   buildEmptyCalendar,
+  renderCalendarFromWorkingCourses,
 } from "./tab/calendar.js";
 import {
   renderSavedList,
@@ -120,6 +121,7 @@ import "./tab/chat.js";
       await resolveAndMigrateCalendarPrefs(r, State.currentTerm);
       hydrateCalendarPrefsForTerm(State.currentTerm, "registered");
       buildEmptyCalendar();
+      renderCalendarFromWorkingCourses();
 
       const gen = State.bumpTermChangeGeneration();
       if (loginFromToolbar) {
