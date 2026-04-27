@@ -100,7 +100,7 @@ $("aiClearAllBtn")?.addEventListener("click", () => {
 export async function applyNewCalendarBlocks(incoming) {
   if (!incoming || !incoming.length) return;
   State.setCalendarBlocks(mergeCalendarBlocks(State.calendarBlocks, incoming));
-  await persistCalendarBlocksForTerm(State.currentTerm, State.calendarBlocks);
+  await persistCalendarBlocksForTerm(State.currentTerm, State.activeScheduleKey, State.calendarBlocks);
   if (State.studentProfile) State.studentProfile.calendarBlocks = State.calendarBlocks;
   renderCalendarFromWorkingCourses();
 }
@@ -111,7 +111,7 @@ export async function removeCalendarBlock(label) {
       (b) => b.label.toLowerCase() !== (label || "").toLowerCase(),
     ),
   );
-  await persistCalendarBlocksForTerm(State.currentTerm, State.calendarBlocks);
+  await persistCalendarBlocksForTerm(State.currentTerm, State.activeScheduleKey, State.calendarBlocks);
   if (State.studentProfile) State.studentProfile.calendarBlocks = State.calendarBlocks;
   renderCalendarFromWorkingCourses();
 }
@@ -119,7 +119,7 @@ export async function removeCalendarBlock(label) {
 export async function applyNewAvoidDay(day) {
   if (!day || State.avoidDays.includes(day)) return;
   State.setAvoidDays([...State.avoidDays, day]);
-  await persistAvoidDaysForTerm(State.currentTerm, State.avoidDays);
+  await persistAvoidDaysForTerm(State.currentTerm, State.activeScheduleKey, State.avoidDays);
   if (State.studentProfile) State.studentProfile.avoidDays = State.avoidDays;
   renderCalendarFromWorkingCourses();
 }
@@ -127,7 +127,7 @@ export async function applyNewAvoidDay(day) {
 export async function removeAvoidDay(day) {
   if (!day || !State.avoidDays.includes(day)) return;
   State.setAvoidDays(State.avoidDays.filter((d) => d !== day));
-  await persistAvoidDaysForTerm(State.currentTerm, State.avoidDays);
+  await persistAvoidDaysForTerm(State.currentTerm, State.activeScheduleKey, State.avoidDays);
   if (State.studentProfile) State.studentProfile.avoidDays = State.avoidDays;
   renderCalendarFromWorkingCourses();
 }
@@ -383,7 +383,7 @@ export async function applyAction(action) {
     case "reset_avoid_days": {
       const prior = State.avoidDays.slice();
       State.setAvoidDays([]);
-      await persistAvoidDaysForTerm(State.currentTerm, State.avoidDays);
+      await persistAvoidDaysForTerm(State.currentTerm, State.activeScheduleKey, State.avoidDays);
       if (State.studentProfile) State.studentProfile.avoidDays = State.avoidDays;
       renderCalendarFromWorkingCourses();
       if (prior.length) addMessage("system", "Reset kept-clear days (was " + prior.join(", ") + ").");

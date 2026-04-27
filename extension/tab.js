@@ -117,11 +117,8 @@ import "./tab/chat.js";
       const r = await storageLocalGet(["savedSchedules", ...CALENDAR_PREFS_STORAGE_KEYS]);
       if (r.savedSchedules) State.setSavedSchedules(r.savedSchedules);
       renderSavedList();
-      const { blocksByTerm, daysByTerm } = await resolveAndMigrateCalendarPrefs(
-        r,
-        State.currentTerm,
-      );
-      hydrateCalendarPrefsForTerm(State.currentTerm, blocksByTerm, daysByTerm);
+      await resolveAndMigrateCalendarPrefs(r, State.currentTerm);
+      hydrateCalendarPrefsForTerm(State.currentTerm, "registered");
       buildEmptyCalendar();
 
       const gen = State.bumpTermChangeGeneration();
@@ -177,7 +174,8 @@ $("termSelect").addEventListener("change", async (e) => {
   // bails before dispatching actions to the now-invalid term context.
   bumpChatGeneration();
   State.setCurrentTerm(e.target.value);
-  await loadCalendarPrefsForTerm(State.currentTerm);
+  State.setActiveScheduleKey("registered");
+  await loadCalendarPrefsForTerm(State.currentTerm, "registered");
   // Cancel any in-flight analysis immediately — otherwise the old term
   // keeps firing searchCourse calls for 2-3s until the new runAnalysis
   // message lands.
