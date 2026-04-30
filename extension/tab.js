@@ -13,11 +13,13 @@ import * as State from "./tab/state.js";
 import { $ } from "./tab/state.js";
 import {
   applyStudentInfoToUI,
+  refreshDegreeAuditOverview,
   updateOverviewFromEvents,
   setPanelMode,
 } from "./tab/overview.js";
 import {
   buildEmptyCalendar,
+  renderCalendarFromWorkingCourses,
 } from "./tab/calendar.js";
 import {
   renderSavedList,
@@ -34,6 +36,13 @@ import {
   bumpChatGeneration,
   clearRejectedCandidates,
 } from "./tab/ai.js";
+import {
+  CALENDAR_PREFS_STORAGE_KEYS,
+  hydrateCalendarPrefsForTerm,
+  loadCalendarPrefsForTerm,
+  resolveAndMigrateCalendarPrefs,
+  storageLocalGet,
+} from "./tab/termPrefs.js";
 // Side-effect imports — these modules register DOMContentLoaded /
 // button / chrome.runtime listeners at evaluation time.
 import "./tab/modal.js";
@@ -78,16 +87,6 @@ import "./tab/chat.js";
     }
   });
 
-  chrome.storage.local.get(
-    ["savedSchedules", "calendarBlocks", "avoidDays"],
-    (result) => {
-      if (result.savedSchedules) State.setSavedSchedules(result.savedSchedules);
-      if (result.calendarBlocks) State.setCalendarBlocks(result.calendarBlocks);
-      if (Array.isArray(result.avoidDays)) State.setAvoidDays(result.avoidDays);
-      renderSavedList();
-    },
-  );
-
   chrome.runtime.sendMessage({ action: "getTerms" }, (terms) => {
     if (!terms || terms.length === 0) return;
     const select = $("termSelect");
@@ -114,9 +113,16 @@ import "./tab/chat.js";
     });
     State.setTermDescriptionsByCode(descByCode);
     State.setCurrentTerm(terms[currentIdx].code);
-    buildEmptyCalendar();
 
     (async () => {
+      const r = await storageLocalGet(["savedSchedules", ...CALENDAR_PREFS_STORAGE_KEYS]);
+      if (r.savedSchedules) State.setSavedSchedules(r.savedSchedules);
+      renderSavedList();
+      await resolveAndMigrateCalendarPrefs(r, State.currentTerm);
+      hydrateCalendarPrefsForTerm(State.currentTerm, "registered");
+      buildEmptyCalendar();
+      renderCalendarFromWorkingCourses();
+
       const gen = State.bumpTermChangeGeneration();
       if (loginFromToolbar) {
         $("statusBar").textContent =
@@ -142,6 +148,10 @@ import "./tab/chat.js";
       const ok = await checkAuth();
       if (gen !== State.getTermChangeGeneration()) return;
       if (ok) {
+        // Header may have been set to "Not logged in" from the eager boot
+        // fetch; after checkAuth the DegreeWorks session is known-good — refresh.
+        await refreshDegreeAuditOverview();
+        if (gen !== State.getTermChangeGeneration()) return;
         await loadSchedule(State.currentTerm);
         if (gen !== State.getTermChangeGeneration()) return;
         // Banner session is warm after loadSchedule, so plans fetch cheaply.
@@ -166,6 +176,8 @@ $("termSelect").addEventListener("change", async (e) => {
   // bails before dispatching actions to the now-invalid term context.
   bumpChatGeneration();
   State.setCurrentTerm(e.target.value);
+  State.setActiveScheduleKey("registered");
+  await loadCalendarPrefsForTerm(State.currentTerm, "registered");
   // Cancel any in-flight analysis immediately — otherwise the old term
   // keeps firing searchCourse calls for 2-3s until the new runAnalysis
   // message lands.
@@ -199,6 +211,8 @@ $("termSelect").addEventListener("change", async (e) => {
   const ok = await checkAuth();
   if (gen !== State.getTermChangeGeneration()) return;
   if (ok) {
+    await refreshDegreeAuditOverview();
+    if (gen !== State.getTermChangeGeneration()) return;
     await loadSchedule(State.currentTerm);
     if (gen !== State.getTermChangeGeneration()) return;
     await loadBannerPlans(State.currentTerm);
