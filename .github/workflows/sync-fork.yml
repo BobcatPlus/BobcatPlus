@@ -1,0 +1,18 @@
+name: Sync Fork
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync to personal fork
+        uses: wei/git-sync@v3
+        with:
+          source_repo: "https://github.com/BobcatPlus/BobcatPlus"
+          source_branch: "main"
+          destination_repo: "https://${{ secrets.SYNC_TOKEN }}@github.com/MaxW125/BobcatPlus"
+          destination_branch: "main"
