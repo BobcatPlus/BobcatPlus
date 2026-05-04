@@ -17,6 +17,7 @@ import {
 } from "./calendar.js";
 import { buildRegisteredCoursesFromEvents } from "./auth.js";
 import { updateWeekHours, updateWeekHoursFromWorking } from "./overview.js";
+import { hydrateCalendarPrefsForTerm, deleteSavedPlanPrefs } from "./termPrefs.js";
 
 // ── working-schedule mutators ────────────────────────────
 
@@ -72,6 +73,7 @@ export function activateNewPlanRow() {
   setActiveScheduleKey("new");
   setWorkingCourses([]);
   setLockedCrns(new Set());
+  hydrateCalendarPrefsForTerm(State.currentTerm, "new");
   renderCalendarFromWorkingCourses();
   updateSaveBtn();
   renderSavedList();
@@ -85,6 +87,7 @@ export function enterNewPlanEditMode() {
     setActiveScheduleKey("new");
     setWorkingCourses([]);
     setLockedCrns(new Set());
+    hydrateCalendarPrefsForTerm(State.currentTerm, "new");
     renderCalendarFromWorkingCourses();
     updateSaveBtn();
   }
@@ -163,6 +166,7 @@ export function renderSavedList() {
   regItem.addEventListener("click", () => {
     bumpScheduleViewGeneration();
     setActiveScheduleKey("registered");
+    hydrateCalendarPrefsForTerm(State.currentTerm, "registered");
     const cached = State.registeredScheduleCache[State.currentTerm];
     if (cached && cached.length) {
       const { registered, locks } = buildRegisteredCoursesFromEvents(cached);
@@ -205,6 +209,7 @@ export function renderSavedList() {
       if (e.target.classList.contains("delete-btn")) return;
       bumpScheduleViewGeneration();
       setActiveScheduleKey(key);
+      hydrateCalendarPrefsForTerm(State.currentTerm, key);
       renderSavedScheduleOnCalendar(schedule);
       renderSavedList();
     });
@@ -253,6 +258,7 @@ export function renderSavedList() {
       if (e.target.classList.contains("delete-btn")) return;
       const viewGen = bumpScheduleViewGeneration();
       setActiveScheduleKey(key);
+      hydrateCalendarPrefsForTerm(State.currentTerm, key);
       renderSavedList();
       try {
         if (!plan.events || !plan.events.length) {
@@ -341,13 +347,16 @@ export function renderSavedList() {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
       const idx = parseInt(btn.dataset.idx);
+      const totalBefore = State.savedSchedules.length;
       State.savedSchedules.splice(idx, 1);
       chrome.storage.local.set({ savedSchedules: State.savedSchedules });
       if (State.activeScheduleKey === btn.dataset.key) {
         setActiveScheduleKey("registered");
+        hydrateCalendarPrefsForTerm(State.currentTerm, "registered");
         setWorkingCourses(State.workingCourses.filter((c) => c.source === "registered"));
         renderCalendarFromWorkingCourses();
       }
+      deleteSavedPlanPrefs(State.currentTerm, idx, totalBefore);
       renderSavedList();
     });
   });

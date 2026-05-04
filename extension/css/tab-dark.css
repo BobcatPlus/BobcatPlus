@@ -73,6 +73,12 @@
   .saved-item.active, .saved-item-registered.active,
   .view-registered.active                     { border-left-color: #c47878; }
 
+  /* Match Build tab eligible row hover: surface bg + primary text (not var(--maroon), illegible on dark) */
+  .saved-item-new-plan:hover {
+    background: var(--surface);
+    color: var(--text);
+  }
+
   .bp-chip.active {
     border-color: rgba(196, 120, 120, 0.45);
     background: rgba(160, 60, 60, 0.16);
